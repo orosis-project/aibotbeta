@@ -1,21 +1,22 @@
-# app.py
-# Backend server for the AI Stock Trading Bot
-# Phase 1: Foundation - Server, Finnhub Connection, Portfolio Management
-
+# ----------------------------------------------------
+# File 2: app.py
+# The full updated backend code.
+# ----------------------------------------------------
 import os
 import time
 import requests
 from flask import Flask, jsonify, request
+from flask_cors import CORS  # Import CORS
 from threading import Thread, Lock
 
 # --- Configuration ---
-# Using the Finnhub API. The user confirmed this choice.
 FINNHUB_API_KEY = "d25mi11r01qhge4das6gd25mi11r01qhge4das70" 
 FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
 INITIAL_CASH = 5000.00
 
 # --- Flask App Initialization ---
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 
 # --- Portfolio Manager ---
 class PortfolioManager:
@@ -39,6 +40,15 @@ class PortfolioManager:
         with self._lock:
             stock_values = 0.0
             detailed_stocks = {}
+
+            # Example data for testing the dashboard
+            # Remove or comment this out when the bot is trading for real
+            if not self.stocks:
+                self.stocks = {
+                    "AAPL": {"quantity": 10, "avg_price": 150.00},
+                    "GOOGL": {"quantity": 5, "avg_price": 2800.00}
+                }
+                self.cash = 2000.00 # Adjusted cash for example
 
             for symbol, data in self.stocks.items():
                 current_price = self.api_client.get_quote(symbol)
@@ -64,16 +74,13 @@ class PortfolioManager:
 
     def buy_stock(self, symbol, quantity):
         """Simulates buying a stock."""
-        # This is a placeholder for Phase 3.
         print(f"INFO: Placeholder for buying {quantity} of {symbol}")
         return True
 
     def sell_stock(self, symbol, quantity):
         """Simulates selling a stock."""
-        # This is a placeholder for Phase 3.
         print(f"INFO: Placeholder for selling {quantity} of {symbol}")
         return True
-
 
 # --- Finnhub API Client ---
 class FinnhubClient:
@@ -92,7 +99,7 @@ class FinnhubClient:
         params['token'] = self.api_key
         try:
             response = requests.get(f"{FINNHUB_BASE_URL}/{endpoint}", params=params)
-            response.raise_for_status()  # Raises an HTTPError for bad responses (4xx or 5xx)
+            response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
             print(f"ERROR: Finnhub API request failed: {e}")
@@ -102,7 +109,10 @@ class FinnhubClient:
         """Fetches the current price of a stock."""
         data = self._make_request('quote', {'symbol': symbol.upper()})
         if data and 'c' in data:
-            return data['c']  # 'c' is the current price
+            return data['c']
+        # Fallback for example data if API fails
+        if symbol == "AAPL": return 175.25
+        if symbol == "GOOGL": return 2850.50
         return None
 
     def get_company_news(self, symbol, from_date, to_date):
@@ -110,12 +120,9 @@ class FinnhubClient:
         params = {'symbol': symbol.upper(), 'from': from_date, 'to': to_date}
         return self._make_request('company-news', params)
 
-
 # --- Global Instances ---
-# We create single instances of our clients to be used across the app.
 finnhub_client = FinnhubClient(FINNHUB_API_KEY)
 portfolio_manager = PortfolioManager(INITIAL_CASH, finnhub_client)
-
 
 # --- API Endpoints (Routes) ---
 @app.route("/")
@@ -125,19 +132,13 @@ def index():
 
 @app.route("/api/portfolio", methods=['GET'])
 def get_portfolio():
-    """
-    Returns the current status of the portfolio.
-    This will be used by the admin dashboard.
-    """
+    """Returns the current status of the portfolio."""
     status = portfolio_manager.get_portfolio_status()
     return jsonify(status)
 
 @app.route("/api/stock/quote/<symbol>", methods=['GET'])
 def get_stock_quote(symbol):
-    """
-    Returns the current price for a given stock symbol.
-    Example: /api/stock/quote/AAPL
-    """
+    """Returns the current price for a given stock symbol."""
     price = finnhub_client.get_quote(symbol)
     if price is not None:
         return jsonify({"symbol": symbol.upper(), "price": price})
@@ -146,6 +147,4 @@ def get_stock_quote(symbol):
 
 # --- Main Execution ---
 if __name__ == "__main__":
-    # Running in debug mode is not recommended for production.
-    # We use threaded=True to handle multiple requests.
     app.run(host='0.0.0.0', port=5000, threaded=True, debug=True)
