@@ -117,33 +117,26 @@ class PortfolioManager:
             init_db()
             print("Portfolio has been reset.")
 
-            # If this is the very first time the app is running, buy 2 random stocks.
+            # If this is the very first time the app is running, buy 1 META stock.
             if is_fresh_start:
-                self.buy_initial_stocks()
+                self.buy_initial_stock_meta()
 
-    def buy_initial_stocks(self):
-        """Buys a two random stocks to bootstrap the portfolio."""
-        sp500 = self.api_client.get_sp500_constituents()
-        if not sp500:
-            print("Failed to fetch S&P 500 list for initial stocks. Cannot perform initial buy.")
-            return
-
-        # Select 2 random stocks to start with
-        stocks_to_buy = random.sample(sp500, 2)
-        for symbol in stocks_to_buy:
-            print(f"Initiating a forced initial buy of {symbol}...")
-            price = self.api_client.get_quote(symbol)
-            if price:
-                quantity = TRADE_AMOUNT_USD / price
-                self.buy_stock(
-                    symbol=symbol,
-                    quantity=quantity,
-                    price=price,
-                    reasoning="Initial portfolio seeding. This is a forced buy to start the learning process.",
-                    confidence=0.99
-                )
-            else:
-                print(f"Could not get quote for {symbol}. Skipping initial buy.")
+    def buy_initial_stock_meta(self):
+        """Buys a single META stock to bootstrap the portfolio."""
+        symbol = "META"
+        print(f"Initiating a forced initial buy of {symbol}...")
+        price = self.api_client.get_quote(symbol)
+        if price:
+            quantity = TRADE_AMOUNT_USD / price
+            self.buy_stock(
+                symbol=symbol,
+                quantity=quantity,
+                price=price,
+                reasoning="Initial portfolio seeding. This is a forced buy to start the learning process.",
+                confidence=0.99
+            )
+        else:
+            print(f"Could not get quote for {symbol}. Skipping initial buy.")
 
     def get_portfolio_status(self):
         with self._lock:
@@ -442,5 +435,5 @@ if __name__ == "__main__":
     else:
         print("WARNING: Gemini API key not set. Bot loop will not start.")
     
-    port = int(os.environ.get('PORT', 10000))
+    port = int(os.environ.get('PORT', 8000)) # Change the default port to 8000
     app.run(host='0.0.0.0', port=port, threaded=True, debug=False)
