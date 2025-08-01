@@ -125,7 +125,7 @@ class PortfolioManager:
         """Buys a two random stocks to bootstrap the portfolio."""
         sp500 = self.api_client.get_sp500_constituents()
         if not sp500:
-            print("Failed to fetch S&P 500 list for initial stocks.")
+            print("Failed to fetch S&P 500 list for initial stocks. Cannot perform initial buy.")
             return
 
         # Select 2 random stocks to start with
@@ -206,7 +206,12 @@ class PortfolioManager:
 class FinnhubClient:
     def __init__(self, api_key):
         self.api_key = api_key
-        self.sp500_symbols = []
+        # Hardcoded list of S&P 500 symbols to avoid the forbidden API call on the free plan
+        self.sp500_symbols = [
+            "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "META", "GOOG", "BRK.B",
+            "UNH", "JPM", "JNJ", "V", "XOM", "MA", "PG", "HD", "CVX", "LLY", "ABBV",
+            "PFE", "BAC", "KO", "TMO", "PEP", "AVGO", "WMT", "COST", "MCD", "CSCO"
+        ]
         print("Finnhub Client initialized.")
     def _make_request(self, endpoint, params=None):
         if params is None: params = {}
@@ -228,11 +233,8 @@ class FinnhubClient:
     def get_market_news(self):
         return self._make_request('news', {'category': 'general'})
     def get_sp500_constituents(self):
-        if not self.sp500_symbols:
-            data = self._make_request('index/constituents', {'symbol': '^GSPC'})
-            if data and 'constituents' in data:
-                self.sp500_symbols = data['constituents']
-                print(f"Fetched {len(self.sp500_symbols)} S&P 500 constituents.")
+        # We are no longer making an API call for this list due to the 403 error on the free plan.
+        # This function now just returns the hardcoded list.
         return self.sp500_symbols
 
 # --- AI Decision Making ---
