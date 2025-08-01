@@ -103,6 +103,9 @@ class PortfolioManager:
 
     def reset(self):
         with self._lock:
+            # Check if the database file exists. If not, this is a fresh start.
+            is_fresh_start = not os.path.exists(self.db_file)
+
             self.cash = self.initial_cash
             self.stocks = {}
             self.initial_value = self.initial_cash
@@ -113,6 +116,34 @@ class PortfolioManager:
                     print(f"Error removing database file: {e}")
             init_db()
             print("Portfolio has been reset.")
+
+            # If this is the very first time the app is running, buy 2 random stocks.
+            if is_fresh_start:
+                self.buy_initial_stocks()
+
+    def buy_initial_stocks(self):
+        """Buys a two random stocks to bootstrap the portfolio."""
+        sp500 = self.api_client.get_sp500_constituents()
+        if not sp500:
+            print("Failed to fetch S&P 500 list for initial stocks.")
+            return
+
+        # Select 2 random stocks to start with
+        stocks_to_buy = random.sample(sp500, 2)
+        for symbol in stocks_to_buy:
+            print(f"Initiating a forced initial buy of {symbol}...")
+            price = self.api_client.get_quote(symbol)
+            if price:
+                quantity = TRADE_AMOUNT_USD / price
+                self.buy_stock(
+                    symbol=symbol,
+                    quantity=quantity,
+                    price=price,
+                    reasoning="Initial portfolio seeding. This is a forced buy to start the learning process.",
+                    confidence=0.99
+                )
+            else:
+                print(f"Could not get quote for {symbol}. Skipping initial buy.")
 
     def get_portfolio_status(self):
         with self._lock:
@@ -211,10 +242,12 @@ def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, 
     market_headlines = [f"- {item['headline']}" for item in market_news[:5]] if market_news else ["No general market news."]
     
     startup_mode_prompt = ""
-    if trade_count < 2: # We've lowered this to ensure at least 2 trades happen quickly.
+    # The initial trades are now handled by the PortfolioManager.reset method.
+    # The proactive mode is adjusted for a smoother learning curve after the first two trades.
+    if trade_count < 5:
         startup_mode_prompt = """
-        **CRITICAL OPERATIONAL DIRECTIVE: Startup Protocol**
-        Your primary mission is to execute a foundational trade to begin data collection. The system is in an initial state, and inaction is not an acceptable outcome. From the stocks you are analyzing, you **MUST** identify the single most promising BUY opportunity, even if conditions are not perfect. Execute a trade based on this top choice to start the learning cycle. Prioritize making a well-reasoned trade over waiting. During this phase, 'HOLD' is not a valid action.
+        **Current Operational Directive: Startup Protocol**
+        Your primary mission is to learn from your initial trades and continue to find promising BUY opportunities. Inaction is not an acceptable outcome if a strong signal is present. From the stocks you are analyzing, you **must** identify the single most promising BUY opportunity. Prioritize making a well-reasoned trade over waiting, but with a higher confidence threshold than the very first trades.
         """
 
     prompt = f"""
@@ -271,8 +304,9 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
         
         trade_count = get_trade_count()
         # Set a very low threshold for the first trade, then a slightly higher one for the next few.
-        if trade_count == 0:
-            confidence_threshold = 0.55
+        if trade_count < 2:
+             # The first two trades are now handled at startup, so we don't need a low threshold here anymore.
+            confidence_threshold = 0.65
         elif trade_count < 5:
             confidence_threshold = 0.65
         else:
@@ -313,13 +347,8 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
                 reasoning = ai_decision.get('reasoning', '')
                 confidence = ai_decision.get('confidence', 0)
 
-                # Failsafe logic to ensure a trade happens in startup mode
-                if trade_count < 2 and action == 'HOLD':
-                    print("Startup mode: Overriding 'HOLD' to 'BUY' to initiate trading.")
-                    action = 'BUY'
-                    reasoning = f"FORCED BUY: {reasoning}"
-                    confidence = 0.55  # Set a base confidence for the forced trade
-
+                # The startup trade logic has been moved to the reset method.
+                # Now the bot will proceed with normal confidence thresholds.
                 if confidence > confidence_threshold:
                     if action == 'BUY':
                         quantity = TRADE_AMOUNT_USD / price
@@ -413,4 +442,3 @@ if __name__ == "__main__":
     
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port, threaded=True, debug=False)
-
