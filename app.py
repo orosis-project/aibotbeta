@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Backend with Start/Pause Control
+# Final Version: Backend with Start/Pause Control and Startup Mode
 
 import os
 import time
@@ -61,6 +61,19 @@ def init_db():
     conn.commit()
     conn.close()
     print("Database initialized.")
+
+def get_trade_count():
+    """Counts the total number of trades in the database."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(id) FROM trades")
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count
+    except Exception as e:
+        print(f"ERROR: Could not count trades: {e}")
+        return 0
 
 def get_recent_trades(limit=50):
     try:
@@ -192,12 +205,21 @@ class FinnhubClient:
         return self.sp500_symbols
 
 # --- AI Decision Making ---
-def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news):
+def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, trade_count):
     if not ai_model: return None
     news_headlines = [f"- {item['headline']}" for item in news[:5]] if news else ["No recent news for this stock."]
     market_headlines = [f"- {item['headline']}" for item in market_news[:5]] if market_news else ["No general market news."]
+    
+    startup_mode_prompt = ""
+    if trade_count < 5:
+        startup_mode_prompt = """
+    **Current Operational Mode: Startup Mode**
+    You have made fewer than 5 trades, so you are in a special startup mode. You are encouraged to take smart, calculated risks on well-known, high-volume stocks to build your initial trading memory. Your confidence threshold for action is slightly lower. Once you have more experience, you will automatically become more cautious.
+    """
+
     prompt = f"""
-    You are an expert stock trading analyst bot. Your goal is to learn from your actions and maximize portfolio value by making informed, dynamic decisions.
+    You are an expert stock trading analyst bot. Your goal is to learn from your actions and maximize portfolio value.
+    {startup_mode_prompt}
     **Current Portfolio Status:**
     {json.dumps(portfolio, indent=2)}
     **Your 5 Most Recent Trades (Your Memory):**
@@ -242,10 +264,16 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
         
         if not is_running:
             print("Bot is paused. Skipping trading cycle.")
-            time.sleep(30) # Check every 30 seconds if it should resume
+            time.sleep(30)
             continue
 
         print("\n--- Starting new trading cycle ---")
+        
+        # Determine confidence threshold based on experience
+        trade_count = get_trade_count()
+        confidence_threshold = 0.65 if trade_count < 5 else 0.70
+        print(f"Current trade count: {trade_count}. Confidence threshold set to {confidence_threshold*100}%.")
+
         sp500 = finnhub_client.get_sp500_constituents()
         if not sp500:
             print("Could not fetch S&P 500 list, waiting for next cycle.")
@@ -260,7 +288,7 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
         print(f"This cycle, analyzing: {stocks_to_analyze}")
 
         for symbol in stocks_to_analyze:
-            with bot_status_lock: # Check again in case it was paused mid-cycle
+            with bot_status_lock:
                 if not bot_is_running:
                     print("Bot paused mid-cycle. Aborting current cycle.")
                     break
@@ -272,9 +300,9 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
             news = finnhub_client.get_company_news(symbol)
             trades = get_recent_trades(5)
             current_portfolio_status = portfolio_manager.get_portfolio_status()
-            ai_decision = get_ai_decision(symbol, price, news, current_portfolio_status, trades, market_news)
+            ai_decision = get_ai_decision(symbol, price, news, current_portfolio_status, trades, market_news, trade_count)
 
-            if ai_decision and ai_decision.get('confidence', 0) > 0.7:
+            if ai_decision and ai_decision.get('confidence', 0) > confidence_threshold:
                 action = ai_decision.get('action', '').upper()
                 reasoning = ai_decision.get('reasoning', '')
                 confidence = ai_decision.get('confidence', 0)
