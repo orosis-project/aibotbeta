@@ -352,7 +352,7 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
                         if symbol in current_portfolio_status['owned_stocks']:
                             quantity_to_sell = min(TRADE_AMOUNT_USD / price, current_portfolio_status['owned_stocks'][symbol]['quantity'])
                             portfolio_manager.sell_stock(symbol, quantity_to_sell, price, reasoning, confidence)
-            
+                
             time.sleep(20)
 
         print(f"--- Cycle finished. Waiting {LOOP_INTERVAL_SECONDS}s. ---")
@@ -435,10 +435,5 @@ if __name__ == "__main__":
     else:
         print("WARNING: Gemini API key not set. Bot loop will not start.")
     
-    # Get the port from the environment variable 'PORT', which is required by hosting services like Render.
-    # If 'PORT' is not set (e.g., when running locally), it defaults to 8000.
     port = int(os.environ.get('PORT', 8000))
-    
-    # The host '0.0.0.0' makes the app accessible from outside the container,
-    # which is also necessary for deployment on services like Render.
     app.run(host='0.0.0.0', port=port, threaded=True, debug=False)
