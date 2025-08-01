@@ -1,5 +1,1 @@
-flask
-Flask-Cors
-google-generativeai
-requests
-gunicorn
+
