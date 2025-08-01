@@ -2,7 +2,7 @@
 name = "aibotbeta"
 version = "0.1.0"
 description = ""
-authors = [{ name = "Aus Eck", email = "austinme9912@gmail.com" }]
+authors = ["Aus Eck <austinme9912@gmail.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
