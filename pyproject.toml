@@ -2,9 +2,8 @@
 name = "aibotbeta"
 version = "0.1.0"
 description = ""
-authors =
+authors = [{ name = "Aus Eck", email = "austinme9912@gmail.com" }]
 readme = "README.md"
-# REMOVED: packages = [{include = "aibotbeta"}] # This line caused the error
 
 [tool.poetry.dependencies]
 python = ">=3.10"
