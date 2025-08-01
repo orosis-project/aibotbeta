@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Backend with Start/Pause Control and Startup Mode
+# Final Version: Backend with Proactive Startup Mode
 
 import os
 import time
@@ -63,7 +63,6 @@ def init_db():
     print("Database initialized.")
 
 def get_trade_count():
-    """Counts the total number of trades in the database."""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -214,7 +213,7 @@ def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, 
     if trade_count < 5:
         startup_mode_prompt = """
     **Current Operational Mode: Startup Mode**
-    You have made fewer than 5 trades, so you are in a special startup mode. You are encouraged to take smart, calculated risks on well-known, high-volume stocks to build your initial trading memory. Your confidence threshold for action is slightly lower. Once you have more experience, you will automatically become more cautious.
+    Your primary objective is to make an initial trade to begin the learning process. You are authorized to take a calculated risk on a well-known company. Prioritize making a well-reasoned trade over inaction. Your confidence threshold is lower to encourage action.
     """
 
     prompt = f"""
@@ -269,7 +268,6 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
 
         print("\n--- Starting new trading cycle ---")
         
-        # Determine confidence threshold based on experience
         trade_count = get_trade_count()
         confidence_threshold = 0.65 if trade_count < 5 else 0.70
         print(f"Current trade count: {trade_count}. Confidence threshold set to {confidence_threshold*100}%.")
