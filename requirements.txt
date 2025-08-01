@@ -1,7 +1,3 @@
-# ----------------------------------------------------
-# File 1: requirements.txt
-# Add "google-generativeai" to this file.
-# ----------------------------------------------------
 Flask
 requests
 gunicorn
