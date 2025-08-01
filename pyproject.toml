@@ -2,8 +2,9 @@
 name = "aibotbeta"
 version = "0.1.0"
 description = ""
-authors = ["Aus Eck <austinme9912@gmail.com>"]
+authors = ["Aus Eck austinme9912@gmail.com"]
 readme = "README.md"
+packages = [{include = "."}]
 
 [tool.poetry.dependencies]
 python = ">=3.10"
@@ -12,7 +13,6 @@ Flask-Cors = "^4.0.1"
 google-generativeai = "^0.8.5"
 requests = "^2.32.4"
 gunicorn = "^23.0.0"
-
 
 [build-system]
 requires = ["poetry-core"]
