@@ -1,9 +1,9 @@
 # ----------------------------------------------------
 # File 1: requirements.txt
-# Add "Flask-Cors" to this file.
+# Add "google-generativeai" to this file.
 # ----------------------------------------------------
 Flask
 requests
 gunicorn
 Flask-Cors
-
+google-generativeai
