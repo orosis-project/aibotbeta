@@ -1,5 +1,6 @@
 # app.py
 # Final Version: Backend with Initial Buy-in and Delayed AI Learning
+# and fixed thread startup for Gunicorn
 
 import os
 import time
@@ -572,13 +573,18 @@ def admin_pannel():
     return render_template("admin_pannel.html")
 
 # --- Main Execution ---
-if __name__ == "__main__":
-    init_db()
+@app.before_first_request
+def start_bot_thread():
+    """Starts the bot thread before the first request is served."""
     if GEMINI_API_KEY and "YOUR_GEMINI_API_KEY" not in GEMINI_API_KEY:
         bot_thread = Thread(target=bot_trading_loop, args=(portfolio_manager, finnhub_client), daemon=True)
         bot_thread.start()
     else:
         print("WARNING: Gemini API key not set. Bot loop will not start.")
-    
+
+
+if __name__ == "__main__":
+    init_db()
+    # The bot thread is now started via the @app.before_first_request decorator
     port = int(os.environ.get('PORT', 8000))
     app.run(host='0.0.0.0', port=port, threaded=True, debug=False)
