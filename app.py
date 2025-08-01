@@ -548,7 +548,7 @@ def ask_ai():
     market_headlines = [f"- {item['headline']}" for item in market_news[:5]] if market_news else ["No general market news."]
 
     prompt = f"""
-    You are the AI core of a stock trading bot. An administrator is asking you a question.
+    You are an expert stock trading analyst bot. An administrator is asking you a question.
     Based on your current status and recent history, provide a helpful and concise answer.
     **Current Portfolio Status:**
     {json.dumps(portfolio, indent=2)}
@@ -580,6 +580,5 @@ if __name__ == "__main__":
     else:
         print("WARNING: Gemini API key not set. Bot loop will not start.")
     
-    # Use a standard port from environment, defaulting to 8000
     port = int(os.environ.get('PORT', 8000))
     app.run(host='0.0.0.0', port=port, threaded=True, debug=False)
