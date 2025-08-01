@@ -213,7 +213,7 @@ def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, 
     if trade_count < 5:
         startup_mode_prompt = """
     **Current Operational Mode: Startup Mode**
-    Your primary objective is to make an initial trade to begin the learning process. You are authorized to take a calculated risk on a well-known company. Prioritize making a well-reasoned trade over inaction. Your confidence threshold is lower to encourage action.
+    Your highest priority is to make an initial trade to begin the learning process. You are instructed to take a calculated risk on a well-known company from your scan list. Identify the best available opportunity, even if conditions are not perfect, and execute a trade. Prioritize action over inaction to gather data. Your confidence threshold is lowered to encourage this first step.
     """
 
     prompt = f"""
@@ -269,7 +269,7 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
         print("\n--- Starting new trading cycle ---")
         
         trade_count = get_trade_count()
-        confidence_threshold = 0.65 if trade_count < 5 else 0.70
+        confidence_threshold = 0.60 if trade_count < 5 else 0.70 # Lowered startup threshold
         print(f"Current trade count: {trade_count}. Confidence threshold set to {confidence_threshold*100}%.")
 
         sp500 = finnhub_client.get_sp500_constituents()
@@ -282,6 +282,7 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
         portfolio = portfolio_manager.get_portfolio_status()
         owned_stocks = list(portfolio['owned_stocks'].keys())
         market_news = finnhub_client.get_market_news()
+        # Ensure owned stocks are always analyzed for potential selling opportunities
         stocks_to_analyze = list(set(discovered_stocks + owned_stocks))
         print(f"This cycle, analyzing: {stocks_to_analyze}")
 
