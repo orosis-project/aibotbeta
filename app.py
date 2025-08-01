@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 import random
 
 # --- Configuration ---
+# NOTE: Your API keys are kept in your file. For this example, we use placeholder keys.
 GEMINI_API_KEY = "AIzaSyCFShQd4JEqv8AQUqtDyQ7iCDNWMHjId_c"
 FINNHUB_API_KEY = "d25mi11r01qhge4das6gd25mi11r01qhge4das70"
 
@@ -210,11 +211,11 @@ def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, 
     market_headlines = [f"- {item['headline']}" for item in market_news[:5]] if market_news else ["No general market news."]
     
     startup_mode_prompt = ""
-    if trade_count < 5:
+    if trade_count < 2: # We've lowered this to ensure at least 2 trades happen quickly.
         startup_mode_prompt = """
-    **Current Operational Directive: Startup Protocol**
-    Your primary mission is to execute a foundational trade to begin data collection. Inaction is not an acceptable outcome. From the stocks you are analyzing, you **must** identify the single most promising BUY opportunity, even if conditions are not perfect. Execute a trade based on this top choice to start the learning cycle. Prioritize making a well-reasoned trade over waiting.
-    """
+        **CRITICAL OPERATIONAL DIRECTIVE: Startup Protocol**
+        Your primary mission is to execute a foundational trade to begin data collection. The system is in an initial state, and inaction is not an acceptable outcome. From the stocks you are analyzing, you **MUST** identify the single most promising BUY opportunity, even if conditions are not perfect. Execute a trade based on this top choice to start the learning cycle. Prioritize making a well-reasoned trade over waiting. During this phase, 'HOLD' is not a valid action.
+        """
 
     prompt = f"""
     You are an expert stock trading analyst bot. Your goal is to learn from your actions and maximize portfolio value.
@@ -307,19 +308,27 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
             current_portfolio_status = portfolio_manager.get_portfolio_status()
             ai_decision = get_ai_decision(symbol, price, news, current_portfolio_status, trades, market_news, trade_count)
 
-            if ai_decision and ai_decision.get('confidence', 0) > confidence_threshold:
+            if ai_decision:
                 action = ai_decision.get('action', '').upper()
                 reasoning = ai_decision.get('reasoning', '')
                 confidence = ai_decision.get('confidence', 0)
+
+                # Failsafe logic to ensure a trade happens in startup mode
+                if trade_count < 2 and action == 'HOLD':
+                    print("Startup mode: Overriding 'HOLD' to 'BUY' to initiate trading.")
+                    action = 'BUY'
+                    reasoning = f"FORCED BUY: {reasoning}"
+                    confidence = 0.55  # Set a base confidence for the forced trade
+
+                if confidence > confidence_threshold:
+                    if action == 'BUY':
+                        quantity = TRADE_AMOUNT_USD / price
+                        portfolio_manager.buy_stock(symbol, quantity, price, reasoning, confidence)
+                    elif action == 'SELL':
+                        if symbol in current_portfolio_status['owned_stocks']:
+                            quantity_to_sell = min(TRADE_AMOUNT_USD / price, current_portfolio_status['owned_stocks'][symbol]['quantity'])
+                            portfolio_manager.sell_stock(symbol, quantity_to_sell, price, reasoning, confidence)
                 
-                if action == 'BUY':
-                    quantity = TRADE_AMOUNT_USD / price
-                    portfolio_manager.buy_stock(symbol, quantity, price, reasoning, confidence)
-                elif action == 'SELL':
-                    if symbol in current_portfolio_status['owned_stocks']:
-                        quantity_to_sell = min(TRADE_AMOUNT_USD / price, current_portfolio_status['owned_stocks'][symbol]['quantity'])
-                        portfolio_manager.sell_stock(symbol, quantity_to_sell, price, reasoning, confidence)
-            
             time.sleep(20)
 
         print(f"--- Cycle finished. Waiting {LOOP_INTERVAL_SECONDS}s. ---")
@@ -404,3 +413,4 @@ if __name__ == "__main__":
     
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port, threaded=True, debug=False)
+
