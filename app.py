@@ -389,7 +389,6 @@ def ask_ai():
     if not question:
         return jsonify({"answer": "No question was provided."}), 400
     
-    # **FIXED**: Add a clear check for the AI model and API key
     if not ai_model:
         return jsonify({"answer": "AI Core is offline. The GEMINI_API_KEY is likely missing or invalid. Please check the environment variables on Render."}), 503
 
@@ -414,7 +413,6 @@ def ask_ai():
         response = ai_model.generate_content(prompt)
         return jsonify({"answer": response.text})
     except Exception as e:
-        # **FIXED**: Return the specific error message from the AI API
         error_message = f"The AI model failed to respond. This is often due to an invalid API key or a problem with the Google AI service. Error details: {str(e)}"
         print(f"ERROR: Failed to get AI chat response: {e}")
         return jsonify({"answer": error_message}), 500
