@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Corrected initialization logic for stable deployment.
+# Final Version: Persistent memory reconstruction on startup.
 
 import os
 import time
@@ -118,9 +118,12 @@ class PortfolioManager:
 
     def _reconstruct_portfolio_from_db(self):
         with self._lock:
+            print("Reconstructing portfolio from database...")
             all_trades = get_all_trades()
+            
             self.cash = self.initial_cash
             self.stocks = {}
+
             for trade in all_trades:
                 symbol, quantity, price, action = trade['symbol'], trade['quantity'], trade['price'], trade['action']
                 if action == 'BUY':
