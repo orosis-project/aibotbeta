@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Immediate Initial Buy-in and AI Chat Fix
+# Final Version: Resilient startup for API keys and AI initialization.
 
 import os
 import time
@@ -14,36 +14,42 @@ from datetime import datetime, timedelta
 import random
 
 # --- Configuration ---
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY")
-
-FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
 INITIAL_CASH = 5000.00
 DB_FILE = "trades.db"
-TRADE_AMOUNT_USD = 250 # Reduced trade amount for more diversification
+TRADE_AMOUNT_USD = 250
 LOOP_INTERVAL_SECONDS = 300
 STOCKS_TO_SCAN_PER_CYCLE = 10
 AI_LEARNING_TRADE_THRESHOLD = 5
 INITIAL_BUY_COUNT = 10
+FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
 
 # --- Bot State ---
 bot_status_lock = Lock()
 bot_is_running = True
 
-# --- AI Configuration ---
+# --- AI Configuration (Lazy Initialization) ---
 ai_model = None
+ai_model_configured = False
+ai_model_lock = Lock()
+
 def configure_ai():
-    global ai_model
-    if GEMINI_API_KEY:
-        try:
-            genai.configure(api_key=GEMINI_API_KEY)
-            ai_model = genai.GenerativeModel('gemini-1.5-flash')
-            print("Gemini AI model configured successfully.")
-        except Exception as e:
-            print(f"ERROR: Failed to configure Gemini AI: {e}")
-            ai_model = None
-    else:
-        print("WARNING: Gemini API key not set. AI features will be disabled.")
+    global ai_model, ai_model_configured
+    with ai_model_lock:
+        if ai_model_configured:
+            return
+        
+        gemini_api_key = os.environ.get("GEMINI_API_KEY")
+        if gemini_api_key:
+            try:
+                genai.configure(api_key=gemini_api_key)
+                ai_model = genai.GenerativeModel('gemini-1.5-flash')
+                print("Gemini AI model configured successfully.")
+                ai_model_configured = True
+            except Exception as e:
+                print(f"ERROR: Failed to configure Gemini AI: {e}")
+                ai_model = None
+        else:
+            print("WARNING: Gemini API key not yet found in environment.")
 
 # --- Database Functions ---
 def get_db_connection():
@@ -103,7 +109,6 @@ class PortfolioManager:
         self.initial_cash = initial_cash
         self.api_client = api_client
         self.db_file = db_file
-        # **FIXED**: On first ever startup, trigger the initial buy.
         is_fresh_start = not os.path.exists(self.db_file)
         self.reset(perform_initial_buy=is_fresh_start)
         print("Portfolio Manager initialized.")
@@ -121,15 +126,14 @@ class PortfolioManager:
             init_db()
             print("Portfolio has been reset.")
             if perform_initial_buy:
-                # Run in a thread to avoid blocking server startup
                 Thread(target=self.buy_initial_stocks).start()
                 return {"message": "Portfolio reset and initial stock purchase initiated."}
         return {"message": "Portfolio reset. No initial buy performed."}
 
 
     def buy_initial_stocks(self):
-        print("Starting immediate initial stock purchase process...")
-        time.sleep(5) # Wait for server to be ready
+        print("Starting initial stock purchase process...")
+        time.sleep(10) # Wait for server and API keys to be ready
         sp500 = self.api_client.get_sp500_constituents()
         if not sp500:
             print("Failed to fetch S&P 500 list for initial stocks.")
@@ -145,7 +149,7 @@ class PortfolioManager:
                 purchased_count += 1
             else:
                 print(f"Skipping initial buy for {symbol}.")
-            time.sleep(1.5) # Stagger API calls to avoid rate limiting
+            time.sleep(1.5)
         print(f"Initial buy-in complete. Purchased {purchased_count} stocks.")
         return {"message": f"Initial buy-in complete. Purchased {purchased_count} stocks."}
 
@@ -206,8 +210,7 @@ class PortfolioManager:
 
 # --- Finnhub Client ---
 class FinnhubClient:
-    def __init__(self, api_key):
-        self.api_key = api_key
+    def __init__(self):
         self.sp500_symbols = [
             "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "META", "GOOG", "BRK.B",
             "UNH", "JPM", "JNJ", "V", "XOM", "MA", "PG", "HD", "CVX", "LLY", "ABBV",
@@ -215,9 +218,12 @@ class FinnhubClient:
         ]
         print("Finnhub Client initialized.")
     def _make_request(self, endpoint, params=None):
-        if not self.api_key: return None
+        api_key = os.environ.get("FINNHUB_API_KEY")
+        if not api_key:
+            print("ERROR: FINNHUB_API_KEY not found in environment.")
+            return None
         if params is None: params = {}
-        params['token'] = self.api_key
+        params['token'] = api_key
         try:
             r = requests.get(f"{FINNHUB_BASE_URL}/{endpoint}", params=params)
             r.raise_for_status()
@@ -239,20 +245,16 @@ class FinnhubClient:
 
 # --- AI Decision Making ---
 def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, trade_count):
-    if not ai_model: return None
-    # This function was missing its logic in the user-provided file. It is now restored.
+    if not ai_model:
+        configure_ai() # Attempt to configure AI if not already done
+        if not ai_model:
+            return None
+
     news_headlines = [f"- {item['headline']}" for item in news[:5]] if news else ["No recent news."]
     market_headlines = [f"- {item['headline']}" for item in market_news[:5]] if market_news else ["No general market news."]
     
-    startup_mode_prompt = ""
-    if trade_count < INITIAL_BUY_COUNT + AI_LEARNING_TRADE_THRESHOLD:
-        startup_mode_prompt = f"""
-        **Current Operational Directive: Initial Learning Phase**
-        You are in a learning phase. Your goal is to make {AI_LEARNING_TRADE_THRESHOLD} trades based on strong signals to build a robust learning history. Prioritize making well-reasoned trades over waiting.
-        """
     prompt = f"""
     You are an expert stock trading analyst bot.
-    {startup_mode_prompt}
     **Current Portfolio Status:**
     {json.dumps(portfolio, indent=2)}
     **Your 5 Most Recent Trades (Your Memory):**
@@ -264,7 +266,7 @@ def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, 
     - Recent News Headlines for {symbol}:
     {chr(10).join(news_headlines)}
     **Decision Logic & Learning:**
-    Analyze all available data to make a strategic decision. Assess news for fundamental signals. Learn from your past performance.
+    Analyze all available data to make a strategic decision.
     **Your Response MUST be in the following JSON format ONLY:**
     {{
       "action": "BUY", "symbol": "{symbol}", "confidence": 0.85,
@@ -284,7 +286,13 @@ def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, 
 
 # --- Main Bot Loop ---
 def bot_trading_loop(portfolio_manager, finnhub_client):
-    print("Bot trading loop started.")
+    print("Bot trading loop started. Waiting for API keys...")
+    while not os.environ.get("GEMINI_API_KEY") or not os.environ.get("FINNHUB_API_KEY"):
+        print("API keys not found. Retrying in 30 seconds...")
+        time.sleep(30)
+    
+    print("API keys found. Trading loop is now active.")
+    
     while True:
         with bot_status_lock:
             is_running = bot_is_running
@@ -296,10 +304,7 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
 
         print("\n--- Starting new trading cycle ---")
         trade_count = get_trade_count()
-        if trade_count < INITIAL_BUY_COUNT + AI_LEARNING_TRADE_THRESHOLD:
-            confidence_threshold = 0.65
-        else:
-            confidence_threshold = 0.75
+        confidence_threshold = 0.65 if trade_count < (INITIAL_BUY_COUNT + AI_LEARNING_TRADE_THRESHOLD) else 0.75
         
         print(f"Current trade count: {trade_count}. Confidence threshold set to {confidence_threshold*100}%.")
 
@@ -311,8 +316,7 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
         print(f"This cycle, analyzing: {stocks_to_analyze}")
 
         for symbol in stocks_to_analyze:
-            with bot_status_lock:
-                if not bot_is_running: break
+            if not bot_is_running: break
             
             print(f"Analyzing {symbol}...")
             price = finnhub_client.get_quote(symbol)
@@ -342,7 +346,7 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
         time.sleep(LOOP_INTERVAL_SECONDS)
 
 # --- Global Instances ---
-finnhub_client = FinnhubClient(FINNHUB_API_KEY)
+finnhub_client = FinnhubClient()
 portfolio_manager = PortfolioManager(INITIAL_CASH, finnhub_client, DB_FILE)
 
 # --- API Endpoints ---
@@ -384,6 +388,7 @@ def ask_ai():
     if not question:
         return jsonify({"answer": "No question was provided."}), 400
     
+    configure_ai() # Ensure AI is configured before use
     if not ai_model:
         return jsonify({"answer": "AI Core is offline. The GEMINI_API_KEY is likely missing or invalid in your Render environment variables."}), 503
 
@@ -413,16 +418,11 @@ def ask_ai():
         return jsonify({"answer": error_message}), 500
 
 # --- Main Execution ---
-# Configure AI and start DB when the app module is first loaded.
 init_db()
-configure_ai()
 
-if GEMINI_API_KEY and FINNHUB_API_KEY:
-    if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
-        bot_thread = Thread(target=bot_trading_loop, args=(portfolio_manager, finnhub_client), daemon=True)
-        bot_thread.start()
-else:
-    print("WARNING: API keys not set. Bot loop will not start.")
+if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+    bot_thread = Thread(target=bot_trading_loop, args=(portfolio_manager, finnhub_client), daemon=True)
+    bot_thread.start()
 
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 8000))
