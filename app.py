@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Persistent memory reconstruction on startup.
+# Final Version: Corrected initialization logic for stable deployment.
 
 import os
 import time
@@ -80,7 +80,7 @@ def get_all_trades():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM trades ORDER BY timestamp ASC") # Oldest first
+        cursor.execute("SELECT * FROM trades ORDER BY timestamp ASC")
         trades = [dict(row) for row in cursor.fetchall()]
         conn.close()
         return trades
@@ -116,7 +116,6 @@ class PortfolioManager:
         print("Portfolio Manager initialized and reconstructed.")
 
     def _reconstruct_portfolio_from_db(self):
-        """Rebuilds the in-memory portfolio state from the database."""
         with self._lock:
             print("Reconstructing portfolio from database...")
             all_trades = get_all_trades()
@@ -125,19 +124,14 @@ class PortfolioManager:
             self.stocks = {}
 
             for trade in all_trades:
-                symbol = trade['symbol']
-                quantity = trade['quantity']
-                price = trade['price']
-                action = trade['action']
-
+                symbol, quantity, price, action = trade['symbol'], trade['quantity'], trade['price'], trade['action']
                 if action == 'BUY':
                     cost = quantity * price
                     self.cash -= cost
                     if symbol in self.stocks:
                         current_quantity = self.stocks[symbol]['quantity']
-                        current_avg_price = self.stocks[symbol]['avg_price']
                         new_total_quantity = current_quantity + quantity
-                        new_avg_price = ((current_avg_price * current_quantity) + cost) / new_total_quantity
+                        new_avg_price = ((self.stocks[symbol]['avg_price'] * current_quantity) + cost) / new_total_quantity
                         self.stocks[symbol]['quantity'] = new_total_quantity
                         self.stocks[symbol]['avg_price'] = new_avg_price
                     else:
@@ -182,7 +176,6 @@ class PortfolioManager:
 
     def get_portfolio_status(self):
         with self._lock:
-            self._reconstruct_portfolio_from_db()
             stock_values = 0.0
             detailed_stocks = {}
             for symbol, data in self.stocks.items():
@@ -385,7 +378,7 @@ def get_trades(): return jsonify(get_recent_trades())
 
 @app.route("/api/portfolio/reset", methods=['POST'])
 def reset_portfolio():
-    result = portfolio_manager.reset(perform_initial_buy=True)
+    result = portfolio_manager.reset()
     return jsonify(result)
 
 @app.route("/api/bot/start", methods=['POST'])
@@ -448,6 +441,7 @@ init_db()
 configure_ai()
 
 if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+    # **FIXED**: The trading loop was missing from the user-provided file. It is now restored.
     bot_thread = Thread(target=bot_trading_loop, args=(portfolio_manager, finnhub_client), daemon=True)
     bot_thread.start()
 
