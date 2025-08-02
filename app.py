@@ -1,5 +1,5 @@
 # app.py
-# Final Version: With auto-pause on API limit and daily resume.
+# Final Version: Corrected initialization logic for stable deployment.
 
 import os
 import time
@@ -7,11 +7,11 @@ import requests
 import json
 import sqlite3
 import google.generativeai as genai
-from google.api_core import exceptions as google_exceptions
 from flask import Flask, jsonify, request, render_template, redirect, url_for
 from flask_cors import CORS
 from threading import Thread, Lock
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+import random
 
 # --- Configuration ---
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -30,7 +30,6 @@ INITIAL_BUY_COUNT = 10
 # --- Bot State ---
 bot_status_lock = Lock()
 bot_is_running = True
-api_key_exhausted = False # Flag to track if the API key limit is reached
 
 # --- AI Configuration (Lazy Initialization) ---
 ai_model = None
@@ -265,14 +264,33 @@ class FinnhubClient:
 
 # --- AI Decision Making & Bot Loop ---
 def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, trade_count):
-    global bot_is_running, api_key_exhausted
     if not ai_model:
         configure_ai()
         if not ai_model: return None
 
+    news_headlines = [f"- {item['headline']}" for item in news[:5]] if news else ["No recent news."]
+    market_headlines = [f"- {item['headline']}" for item in market_news[:5]] if market_news else ["No general market news."]
+    
     prompt = f"""
-    You are an expert stock trading analyst bot...
-    (Prompt logic is the same, omitted for brevity)
+    You are an expert stock trading analyst bot.
+    **Current Portfolio Status:**
+    {json.dumps(portfolio, indent=2)}
+    **Your 5 Most Recent Trades (Your Memory):**
+    {json.dumps(recent_trades, indent=2)}
+    **General Market News (Overall Sentiment):**
+    {chr(10).join(market_headlines)}
+    **Stock to Analyze:** {symbol}
+    - Current Price: ${price:.2f}
+    - Recent News Headlines for {symbol}:
+    {chr(10).join(news_headlines)}
+    **Decision Logic & Learning:**
+    Analyze all available data to make a strategic decision.
+    **Your Response MUST be in the following JSON format ONLY:**
+    {{
+      "action": "BUY", "symbol": "{symbol}", "confidence": 0.85,
+      "reasoning": "The stock is showing a bullish trend, which is supported by recent positive news."
+    }}
+    Provide your analysis and decision now.
     """
     try:
         response = ai_model.generate_content(prompt)
@@ -280,51 +298,69 @@ def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, 
         decision = json.loads(decision_text)
         print(f"AI Decision for {symbol}: {decision}")
         return decision
-    except google_exceptions.ResourceExhausted as e:
-        print("CRITICAL ERROR: Gemini API daily limit reached. Auto-pausing bot until tomorrow.")
-        with bot_status_lock:
-            bot_is_running = False
-            api_key_exhausted = True
-        return None
     except Exception as e:
         print(f"ERROR: Failed to get or parse AI decision for {symbol}: {e}")
         return None
 
 def bot_trading_loop(portfolio_manager, finnhub_client):
-    print("Bot trading loop started.")
+    print("Bot trading loop started. Waiting for API keys...")
+    while not os.environ.get("GEMINI_API_KEY") or not os.environ.get("FINNHUB_API_KEY"):
+        print("API keys not found. Retrying in 30 seconds...")
+        time.sleep(30)
+    
+    print("API keys found. Trading loop is now active.")
+    
     while True:
         with bot_status_lock:
             is_running = bot_is_running
         
         if not is_running:
-            status_reason = "API key exhausted" if api_key_exhausted else "manually paused"
-            print(f"Bot is {status_reason}. Skipping trading cycle.")
+            print("Bot is paused. Skipping trading cycle.")
             time.sleep(30)
             continue
 
         print("\n--- Starting new trading cycle ---")
-        # (Trading loop logic remains the same)
-        pass
-
-# --- Scheduler Loop for Daily Resume ---
-def scheduler_loop():
-    """A loop that runs once a day to resume the bot if it was auto-paused."""
-    global bot_is_running, api_key_exhausted
-    while True:
-        # Calculate seconds until next midnight UTC + 1 minute
-        now_utc = datetime.now(timezone.utc)
-        tomorrow_utc = now_utc + timedelta(days=1)
-        midnight_utc = tomorrow_utc.replace(hour=0, minute=1, second=0, microsecond=0)
-        sleep_seconds = (midnight_utc - now_utc).total_seconds()
+        trade_count = len(get_all_trades())
+        confidence_threshold = 0.65 if trade_count < (INITIAL_BUY_COUNT + AI_LEARNING_TRADE_THRESHOLD) else 0.75
         
-        print(f"Scheduler: Sleeping for {sleep_seconds / 3600:.2f} hours until quota reset.")
-        time.sleep(sleep_seconds)
+        print(f"Current trade count: {trade_count}. Confidence threshold set to {confidence_threshold*100}%.")
 
-        with bot_status_lock:
-            if api_key_exhausted:
-                print("Scheduler: API quota has reset. Resuming bot.")
-                bot_is_running = True
-                api_key_exhausted = False
+        sp500 = finnhub_client.get_sp500_constituents()
+        portfolio = portfolio_manager.get_portfolio_status()
+        owned_stocks = list(portfolio['owned_stocks'].keys())
+        market_news = finnhub_client.get_market_news()
+        stocks_to_analyze = list(set(random.sample(sp500, STOCKS_TO_SCAN_PER_CYCLE) + owned_stocks))
+        print(f"This cycle, analyzing: {stocks_to_analyze}")
+
+        for symbol in stocks_to_analyze:
+            if not bot_is_running: break
+            
+            print(f"Analyzing {symbol}...")
+            price = finnhub_client.get_quote(symbol)
+            if not price: continue
+            
+            news = finnhub_client.get_company_news(symbol)
+            trades = get_recent_trades(5)
+            current_portfolio_status = portfolio_manager.get_portfolio_status()
+            ai_decision = get_ai_decision(symbol, price, news, current_portfolio_status, trades, market_news, trade_count)
+
+            if ai_decision and ai_decision.get('confidence', 0) > confidence_threshold:
+                action = ai_decision.get('action', '').upper()
+                reasoning = ai_decision.get('reasoning', '')
+                confidence = ai_decision.get('confidence', 0)
+                
+                if action == 'BUY':
+                    quantity = TRADE_AMOUNT_USD / price
+                    portfolio_manager.buy_stock(symbol, quantity, price, reasoning, confidence)
+                elif action == 'SELL':
+                    if symbol in current_portfolio_status['owned_stocks']:
+                        quantity_to_sell = min(TRADE_AMOUNT_USD / price, current_portfolio_status['owned_stocks'][symbol]['quantity'])
+                        portfolio_manager.sell_stock(symbol, quantity_to_sell, price, reasoning, confidence)
+            
+            time.sleep(20)
+
+        print(f"--- Cycle finished. Waiting {LOOP_INTERVAL_SECONDS}s. ---")
+        time.sleep(LOOP_INTERVAL_SECONDS)
 
 # --- Global Instances & App Initialization ---
 init_db()
@@ -334,9 +370,13 @@ portfolio_manager = PortfolioManager(INITIAL_CASH, finnhub_client, DB_FILE)
 
 # --- Web Page Routes ---
 @app.route("/")
-def index(): return "<h1>AI Stock Bot Backend is Running</h1><p>Access the public dashboard at /view or the admin panel at /admin.</p>"
+def index():
+    return "<h1>AI Stock Bot Backend is Running</h1><p>Access the public dashboard at /view or the admin panel at /admin.</p>"
+
 @app.route("/view")
-def view_dashboard(): return render_template("view.html")
+def view_dashboard():
+    return render_template("view.html")
+
 @app.route("/admin", methods=['GET', 'POST'])
 def admin_dashboard():
     if request.method == 'POST':
@@ -355,14 +395,12 @@ def get_trades(): return jsonify(get_recent_trades())
 
 @app.route("/api/portfolio/reset", methods=['POST'])
 def reset_portfolio():
-    result = portfolio_manager.reset(perform_initial_buy=True)
+    result = portfolio_manager.reset()
     return jsonify(result)
 
 @app.route("/api/bot/start", methods=['POST'])
 def start_bot():
-    global bot_is_running, api_key_exhausted
-    if api_key_exhausted:
-        return jsonify({"status": "paused", "reason": "API key is exhausted. Bot will resume automatically tomorrow."}), 400
+    global bot_is_running
     with bot_status_lock:
         bot_is_running = True
     return jsonify({"status": "running"})
@@ -378,23 +416,47 @@ def pause_bot():
 def get_bot_status():
     with bot_status_lock:
         status = "running" if bot_is_running else "paused"
-        if api_key_exhausted:
-            status = "paused_apikey" # Special status for the frontend
     return jsonify({"status": status})
 
 @app.route("/api/ask", methods=['POST'])
 def ask_ai():
-    # (This function's logic remains the same)
-    pass
+    question = request.json.get('question')
+    if not question:
+        return jsonify({"answer": "No question was provided."}), 400
+    
+    configure_ai()
+    if not ai_model:
+        return jsonify({"answer": "AI Core is offline. Check GEMINI_API_KEY."}), 503
+
+    portfolio = portfolio_manager.get_portfolio_status()
+    trades = get_recent_trades(5)
+    market_news = finnhub_client.get_market_news()
+    market_headlines = [f"- {item['headline']}" for item in market_news[:5]] if market_news else ["No general market news."]
+
+    prompt = f"""
+    You are the AI core of a stock trading bot. An administrator is asking you a question.
+    Based on your current status and recent history, provide a helpful and concise answer.
+    **Current Portfolio Status:**
+    {json.dumps(portfolio, indent=2)}
+    **Your 5 Most Recent Trades (Your Memory):**
+    {json.dumps(trades, indent=2)}
+    **General Market News (Overall Sentiment):**
+    {chr(10).join(market_headlines)}
+    **Administrator's Question:** "{question}"
+    **Your Answer:**
+    """
+    try:
+        response = ai_model.generate_content(prompt)
+        return jsonify({"answer": response.text})
+    except Exception as e:
+        error_message = f"The AI model failed to respond. Error: {str(e)}"
+        print(f"ERROR: Failed to get AI chat response: {e}")
+        return jsonify({"answer": error_message}), 500
 
 # --- Main Execution ---
 if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
-    # Start the main trading loop
     bot_thread = Thread(target=bot_trading_loop, args=(portfolio_manager, finnhub_client), daemon=True)
     bot_thread.start()
-    # Start the daily resume scheduler
-    scheduler_thread = Thread(target=scheduler_loop, daemon=True)
-    scheduler_thread.start()
 
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 8000))
