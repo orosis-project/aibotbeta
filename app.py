@@ -222,7 +222,6 @@ class PortfolioManager:
 
 
     def get_portfolio_status(self):
-        # FIX: Reconstruct the portfolio from the database for the most up-to-date information
         self._reconstruct_portfolio_from_db()
         with self._lock:
             stock_values = 0.0
@@ -237,7 +236,6 @@ class PortfolioManager:
                 }
             total_value = self.cash + stock_values
             profit_loss = total_value - self.initial_value
-            # The fixed line is here:
             return {
                 "cash": self.cash, "owned_stocks": detailed_stocks,
                 "total_portfolio_value": total_value, "profit_loss": profit_loss
@@ -544,8 +542,41 @@ def get_bot_status():
 
 @app.route("/api/ask", methods=['POST'])
 def ask_ai():
-    # (This function's logic remains the same)
-    pass
+    global ai_model, ai_model_configured
+    if not ai_model_configured:
+        configure_ai()
+        if not ai_model_configured:
+            return jsonify({"answer": "Error: AI model not configured."}), 500
+    
+    question = request.json.get('question')
+    if not question:
+        return jsonify({"answer": "Error: No question provided."}), 400
+        
+    try:
+        portfolio_status = portfolio_manager.get_portfolio_status()
+        recent_trades = get_recent_trades(5)
+        
+        prompt = f"""
+        You are an AI stock bot assistant. Your task is to answer questions about the bot's portfolio, trading strategy, and market conditions based on the provided data.
+        
+        **Bot's Current Portfolio:**
+        {json.dumps(portfolio_status, indent=2)}
+        
+        **Bot's Recent Trades:**
+        {json.dumps(recent_trades, indent=2)}
+        
+        **User's Question:**
+        {question}
+        
+        Provide a helpful and concise answer to the user's question.
+        """
+        response = ai_model.generate_content(prompt)
+        answer = response.text
+        return jsonify({"answer": answer})
+        
+    except Exception as e:
+        print(f"Error in ask_ai: {e}")
+        return jsonify({"answer": "Error: Failed to get a response from the AI."}), 500
 
 # --- Main Execution ---
 if __name__ == "__main__":
