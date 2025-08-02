@@ -116,6 +116,18 @@ def get_recent_trades(limit=50):
 app = Flask(__name__)
 CORS(app)
 
+# Global Error Handler: Ensures all API errors return JSON, not HTML
+@app.errorhandler(Exception)
+def handle_exception(e):
+    # Log the error for debugging on Render's side
+    print(f"An unexpected error occurred: {e}")
+    # Return a JSON response with a 500 status code
+    response = {
+        "error": "An internal server error occurred.",
+        "details": str(e)
+    }
+    return jsonify(response), 500
+
 # --- Portfolio Manager ---
 class PortfolioManager:
     def __init__(self, initial_cash, api_client, db_file):
@@ -557,8 +569,10 @@ def get_bot_status():
 @app.route("/api/ask", methods=['POST'])
 def ask_ai():
     question = request.json.get('question')
-    if not question or not ai_model:
-        return jsonify({"answer": "AI is unavailable or no question was asked."}), 400
+    if not question:
+        return jsonify({"answer": "No question was asked."}), 400
+    if not ai_model:
+        return jsonify({"answer": "AI is currently unavailable. Please check the API key."}), 503
     
     portfolio = portfolio_manager.get_portfolio_status()
     trades = get_recent_trades(5)
