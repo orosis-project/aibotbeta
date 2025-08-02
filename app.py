@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Corrected initialization logic to fix race condition.
+# Final Version: Aggressive "Hunter Mode" for initial AI trades.
 
 import os
 import time
@@ -22,7 +22,7 @@ INITIAL_CASH = 5000.00
 DB_FILE = "trades.db"
 TRADE_AMOUNT_USD = 250
 LOOP_INTERVAL_SECONDS = 300
-STOCKS_TO_SCAN_PER_CYCLE = 10
+STOCKS_TO_SCAN_PER_CYCLE = 15 # Increased scan range
 AI_LEARNING_TRADE_THRESHOLD = 5
 INITIAL_BUY_COUNT = 10
 
@@ -117,12 +117,9 @@ class PortfolioManager:
 
     def _reconstruct_portfolio_from_db(self):
         with self._lock:
-            print("Reconstructing portfolio from database...")
             all_trades = get_all_trades()
-            
             self.cash = self.initial_cash
             self.stocks = {}
-
             for trade in all_trades:
                 symbol, quantity, price, action = trade['symbol'], trade['quantity'], trade['price'], trade['action']
                 if action == 'BUY':
@@ -142,7 +139,7 @@ class PortfolioManager:
                         self.stocks[symbol]['quantity'] -= quantity
                         if self.stocks[symbol]['quantity'] < 1e-6:
                             del self.stocks[symbol]
-            print(f"Reconstruction complete. Portfolio: {self.stocks}, Cash: {self.cash:.2f}")
+            print(f"Reconstruction complete. Cash: {self.cash:.2f}")
 
     def reset(self):
         with self._lock:
@@ -273,8 +270,15 @@ def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, 
     news_headlines = [f"- {item['headline']}" for item in news[:5]] if news else ["No recent news."]
     market_headlines = [f"- {item['headline']}" for item in market_news[:5]] if market_news else ["No general market news."]
     
+    hunter_mode_prompt = ""
+    if trade_count < INITIAL_BUY_COUNT + AI_LEARNING_TRADE_THRESHOLD:
+        hunter_mode_prompt = f"""
+        **Current Operational Directive: Hunter Mode**
+        You are in an active learning phase. Your primary mission is to execute {AI_LEARNING_TRADE_THRESHOLD} AI-driven trades to build your memory. You MUST analyze the market and identify the best possible trading opportunity (either BUY or SELL) in this cycle. Inaction is not an option unless no trade is viable. Prioritize making a well-reasoned trade over waiting.
+        """
     prompt = f"""
-    You are an expert stock trading analyst bot.
+    You are an autonomous, expert stock trading bot. You are in an active trading cycle.
+    {hunter_mode_prompt}
     **Current Portfolio Status:**
     {json.dumps(portfolio, indent=2)}
     **Your 5 Most Recent Trades (Your Memory):**
@@ -285,12 +289,12 @@ def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, 
     - Current Price: ${price:.2f}
     - Recent News Headlines for {symbol}:
     {chr(10).join(news_headlines)}
-    **Decision Logic & Learning:**
-    Analyze all available data to make a strategic decision.
+    **Your Task:**
+    Analyze all available data and make a strategic trading decision NOW. Your decision must be one of BUY, SELL, or HOLD.
     **Your Response MUST be in the following JSON format ONLY:**
     {{
       "action": "BUY", "symbol": "{symbol}", "confidence": 0.85,
-      "reasoning": "The stock is showing a bullish trend, which is supported by recent positive news."
+      "reasoning": "Based on the positive market sentiment and strong company-specific news, I am initiating a buy."
     }}
     Provide your analysis and decision now.
     """
@@ -322,7 +326,7 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
             continue
 
         print("\n--- Starting new trading cycle ---")
-        trade_count = get_trade_count()
+        trade_count = len(get_all_trades())
         confidence_threshold = 0.65 if trade_count < (INITIAL_BUY_COUNT + AI_LEARNING_TRADE_THRESHOLD) else 0.75
         
         print(f"Current trade count: {trade_count}. Confidence threshold set to {confidence_threshold*100}%.")
