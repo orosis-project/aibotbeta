@@ -34,7 +34,7 @@ STOCKS_TO_SCAN_PER_CYCLE = 15
 AI_LEARNING_TRADE_THRESHOLD = 5
 INITIAL_BUY_COUNT = 10
 # New: Rate limiting for Finnhub to avoid 429 errors
-FINNHUB_RATE_LIMIT_SECONDS = 1.5
+FINNHUB_RATE_LIMIT_SECONDS = 2.0
 
 # --- Bot State ---
 bot_status_lock = Lock()
@@ -216,7 +216,7 @@ class PortfolioManager:
                 self.buy_stock(symbol, quantity, price, "Initial portfolio seeding.", 0.5)
             else:
                 print(f"Skipping initial buy for {symbol}.")
-            time.sleep(1.5)
+            # The centralized rate limiter handles the delay
         print("Initial buy-in complete.")
         self._reconstruct_portfolio_from_db()
 
@@ -289,7 +289,15 @@ class FinnhubClient:
             "UNH", "JPM", "JNJ", "V", "XOM", "MA", "PG", "HD", "CVX", "LLY", "ABBV",
             "PFE", "BAC", "KO", "TMO", "PEP", "AVGO", "WMT", "COST", "MCD", "CSCO"
         ]
+        self._last_request_time = 0
         print("Finnhub Client initialized.")
+
+    def _enforce_rate_limit(self):
+        """Ensures a minimum delay between API requests to respect rate limits."""
+        elapsed = time.time() - self._last_request_time
+        if elapsed < FINNHUB_RATE_LIMIT_SECONDS:
+            time.sleep(FINNHUB_RATE_LIMIT_SECONDS - elapsed)
+        self._last_request_time = time.time()
 
     def _make_request(self, endpoint, params=None):
         api_key = os.environ.get("FINNHUB_API_KEY")
@@ -299,11 +307,13 @@ class FinnhubClient:
         if params is None:
             params = {}
         params['token'] = api_key
+        
+        # Enforce rate limit before making the request
+        self._enforce_rate_limit()
+
         try:
             r = requests.get(f"{FINNHUB_BASE_URL}/{endpoint}", params=params)
             r.raise_for_status()
-            # New: Add a sleep delay to respect Finnhub's rate limits
-            time.sleep(FINNHUB_RATE_LIMIT_SECONDS)
             return r.json()
         except requests.exceptions.RequestException as e:
             print(f"ERROR: Finnhub request failed: {e}")
@@ -410,7 +420,6 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
         print(f"Current trade count: {trade_count}. Confidence threshold set to {confidence_threshold * 100}%.")
 
         sp500 = finnhub_client.get_sp500_constituents()
-        # FIX: The bot loop also needs the latest portfolio data
         portfolio = portfolio_manager.get_portfolio_status()
         owned_stocks = list(portfolio['owned_stocks'].keys())
         market_news = finnhub_client.get_market_news()
@@ -429,7 +438,6 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
 
             news = finnhub_client.get_company_news(symbol)
             trades = get_recent_trades(5)
-            # FIX: We have the latest portfolio status from the start of the loop, no need to call again here.
             current_portfolio_status = portfolio
             ai_decision = get_ai_decision(symbol, price, news, current_portfolio_status, trades, market_news, trade_count)
 
@@ -454,7 +462,8 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
                         if quantity_to_sell > 0:
                             portfolio_manager.sell_stock(symbol, quantity_to_sell, price, reasoning, confidence)
             
-            time.sleep(20)
+            # The centralized rate limiter handles the delay
+            # We don't need a separate sleep here anymore
 
         print(f"--- Cycle finished. Waiting {LOOP_INTERVAL_SECONDS}s. ---")
         time.sleep(LOOP_INTERVAL_SECONDS)
