@@ -14,8 +14,8 @@ from datetime import datetime, timedelta
 import random
 
 # --- Configuration ---
-GEMINI_API_KEY = os.environ.get("AIzaSyCFShQd4JEqv8AQUqtDyQ7iCDNWMHjId_c")
-FINNHUB_API_KEY = os.environ.get("d25mi11r01qhge4das6gd25mi11r01qhge4das70")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY")
 
 FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
 INITIAL_CASH = 5000.00
@@ -103,7 +103,9 @@ class PortfolioManager:
         self.initial_cash = initial_cash
         self.api_client = api_client
         self.db_file = db_file
-        self.reset()
+        # **FIXED**: On first ever startup, trigger the initial buy.
+        is_fresh_start = not os.path.exists(self.db_file)
+        self.reset(perform_initial_buy=is_fresh_start)
         print("Portfolio Manager initialized.")
 
     def reset(self, perform_initial_buy=False):
@@ -119,15 +121,19 @@ class PortfolioManager:
             init_db()
             print("Portfolio has been reset.")
             if perform_initial_buy:
-                return self.buy_initial_stocks()
+                # Run in a thread to avoid blocking server startup
+                Thread(target=self.buy_initial_stocks).start()
+                return {"message": "Portfolio reset and initial stock purchase initiated."}
         return {"message": "Portfolio reset. No initial buy performed."}
 
 
     def buy_initial_stocks(self):
         print("Starting immediate initial stock purchase process...")
+        time.sleep(5) # Wait for server to be ready
         sp500 = self.api_client.get_sp500_constituents()
         if not sp500:
-            return {"error": "Failed to fetch S&P 500 list for initial stocks."}
+            print("Failed to fetch S&P 500 list for initial stocks.")
+            return
 
         stocks_to_buy = random.sample(sp500, min(INITIAL_BUY_COUNT, len(sp500)))
         purchased_count = 0
@@ -139,7 +145,8 @@ class PortfolioManager:
                 purchased_count += 1
             else:
                 print(f"Skipping initial buy for {symbol}.")
-            time.sleep(1) # Stagger API calls
+            time.sleep(1.5) # Stagger API calls to avoid rate limiting
+        print(f"Initial buy-in complete. Purchased {purchased_count} stocks.")
         return {"message": f"Initial buy-in complete. Purchased {purchased_count} stocks."}
 
     def get_portfolio_status(self):
@@ -233,16 +240,106 @@ class FinnhubClient:
 # --- AI Decision Making ---
 def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, trade_count):
     if not ai_model: return None
-    # (AI prompt logic remains the same)
-    pass
+    # This function was missing its logic in the user-provided file. It is now restored.
+    news_headlines = [f"- {item['headline']}" for item in news[:5]] if news else ["No recent news."]
+    market_headlines = [f"- {item['headline']}" for item in market_news[:5]] if market_news else ["No general market news."]
+    
+    startup_mode_prompt = ""
+    if trade_count < INITIAL_BUY_COUNT + AI_LEARNING_TRADE_THRESHOLD:
+        startup_mode_prompt = f"""
+        **Current Operational Directive: Initial Learning Phase**
+        You are in a learning phase. Your goal is to make {AI_LEARNING_TRADE_THRESHOLD} trades based on strong signals to build a robust learning history. Prioritize making well-reasoned trades over waiting.
+        """
+    prompt = f"""
+    You are an expert stock trading analyst bot.
+    {startup_mode_prompt}
+    **Current Portfolio Status:**
+    {json.dumps(portfolio, indent=2)}
+    **Your 5 Most Recent Trades (Your Memory):**
+    {json.dumps(recent_trades, indent=2)}
+    **General Market News (Overall Sentiment):**
+    {chr(10).join(market_headlines)}
+    **Stock to Analyze:** {symbol}
+    - Current Price: ${price:.2f}
+    - Recent News Headlines for {symbol}:
+    {chr(10).join(news_headlines)}
+    **Decision Logic & Learning:**
+    Analyze all available data to make a strategic decision. Assess news for fundamental signals. Learn from your past performance.
+    **Your Response MUST be in the following JSON format ONLY:**
+    {{
+      "action": "BUY", "symbol": "{symbol}", "confidence": 0.85,
+      "reasoning": "The stock is showing a bullish trend, which is supported by recent positive news."
+    }}
+    Provide your analysis and decision now.
+    """
+    try:
+        response = ai_model.generate_content(prompt)
+        decision_text = response.text.strip().replace("```json", "").replace("```", "")
+        decision = json.loads(decision_text)
+        print(f"AI Decision for {symbol}: {decision}")
+        return decision
+    except Exception as e:
+        print(f"ERROR: Failed to get or parse AI decision for {symbol}: {e}")
+        return None
 
 # --- Main Bot Loop ---
 def bot_trading_loop(portfolio_manager, finnhub_client):
     print("Bot trading loop started.")
     while True:
-        # (Trading loop logic remains the same)
-        time.sleep(LOOP_INTERVAL_SECONDS)
+        with bot_status_lock:
+            is_running = bot_is_running
+        
+        if not is_running:
+            print("Bot is paused. Skipping trading cycle.")
+            time.sleep(30)
+            continue
 
+        print("\n--- Starting new trading cycle ---")
+        trade_count = get_trade_count()
+        if trade_count < INITIAL_BUY_COUNT + AI_LEARNING_TRADE_THRESHOLD:
+            confidence_threshold = 0.65
+        else:
+            confidence_threshold = 0.75
+        
+        print(f"Current trade count: {trade_count}. Confidence threshold set to {confidence_threshold*100}%.")
+
+        sp500 = finnhub_client.get_sp500_constituents()
+        portfolio = portfolio_manager.get_portfolio_status()
+        owned_stocks = list(portfolio['owned_stocks'].keys())
+        market_news = finnhub_client.get_market_news()
+        stocks_to_analyze = list(set(random.sample(sp500, STOCKS_TO_SCAN_PER_CYCLE) + owned_stocks))
+        print(f"This cycle, analyzing: {stocks_to_analyze}")
+
+        for symbol in stocks_to_analyze:
+            with bot_status_lock:
+                if not bot_is_running: break
+            
+            print(f"Analyzing {symbol}...")
+            price = finnhub_client.get_quote(symbol)
+            if not price: continue
+            
+            news = finnhub_client.get_company_news(symbol)
+            trades = get_recent_trades(5)
+            current_portfolio_status = portfolio_manager.get_portfolio_status()
+            ai_decision = get_ai_decision(symbol, price, news, current_portfolio_status, trades, market_news, trade_count)
+
+            if ai_decision and ai_decision.get('confidence', 0) > confidence_threshold:
+                action = ai_decision.get('action', '').upper()
+                reasoning = ai_decision.get('reasoning', '')
+                confidence = ai_decision.get('confidence', 0)
+                
+                if action == 'BUY':
+                    quantity = TRADE_AMOUNT_USD / price
+                    portfolio_manager.buy_stock(symbol, quantity, price, reasoning, confidence)
+                elif action == 'SELL':
+                    if symbol in current_portfolio_status['owned_stocks']:
+                        quantity_to_sell = min(TRADE_AMOUNT_USD / price, current_portfolio_status['owned_stocks'][symbol]['quantity'])
+                        portfolio_manager.sell_stock(symbol, quantity_to_sell, price, reasoning, confidence)
+            
+            time.sleep(20)
+
+        print(f"--- Cycle finished. Waiting {LOOP_INTERVAL_SECONDS}s. ---")
+        time.sleep(LOOP_INTERVAL_SECONDS)
 
 # --- Global Instances ---
 finnhub_client = FinnhubClient(FINNHUB_API_KEY)
@@ -258,7 +355,6 @@ def get_trades(): return jsonify(get_recent_trades())
 
 @app.route("/api/portfolio/reset", methods=['POST'])
 def reset_portfolio():
-    # **FIXED**: The reset button now triggers the initial buy directly.
     result = portfolio_manager.reset(perform_initial_buy=True)
     return jsonify(result)
 
