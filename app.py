@@ -1,6 +1,5 @@
 # app.py
-# Final Version: Backend with Initial Buy-in and Delayed AI Learning
-# and fixed thread startup for Gunicorn
+# Final Version: Backend with Initial Buy-in, Delayed AI Learning, and Gunicorn Fixes
 
 import os
 import time
@@ -8,7 +7,7 @@ import requests
 import json
 import sqlite3
 import google.generativeai as genai
-from flask import Flask, jsonify, request, render_template
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from threading import Thread, Lock
 from datetime import datetime, timedelta
@@ -16,14 +15,6 @@ import random
 import re
 
 # --- Configuration ---
-# NOTE: Render will inject a PORT environment variable, which the code
-# below already correctly handles with os.environ.get('PORT', 8000).
-
-# IMPORTANT: You should set these as environment variables in Render's dashboard.
-# DO NOT store them directly in your code for security reasons.
-# GEMINI_API_KEY = "AIzaSyCFShQd4JEqv8AQUqtDyQ7iCDNWMHjId_c"
-# FINNHUB_API_KEY = "d25mi11r01qhge4das6gd25mi11r01qhge4das70"
-
 # Using os.environ to get keys from Render's environment variables
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY")
@@ -34,13 +25,9 @@ DB_FILE = "trades.db"
 TRADE_AMOUNT_USD = 500
 LOOP_INTERVAL_SECONDS = 300  # 5 minutes
 STOCKS_TO_SCAN_PER_CYCLE = 10
-# Advanced Risk Management: Adjust these values to control risk appetite
-CONFIDENCE_MULTIPLIER = 2.0  # Scales the trade size by confidence.
-MIN_CONFIDENCE_FOR_RISKY_TRADE = 0.8  # AI must be this confident for a large trade.
 # Delayed AI Learning configuration
 AI_LEARNING_TRADE_THRESHOLD = 3
 INITIAL_BUY_COUNT = 10
-AI_LEARNING_ENABLED = False  # Global flag for AI learning status
 
 # --- Bot State ---
 bot_status_lock = Lock()
@@ -58,12 +45,7 @@ if GEMINI_API_KEY:
 else:
     print("WARNING: Gemini API key not set. AI features will be disabled.")
 
-
 # --- Database Functions ---
-# NOTE: For a production app on Render, you might consider an external database
-# like Render's PostgreSQL or an S3 bucket to store the SQLite file, as the
-# local filesystem is ephemeral and resets on each redeploy. For this example,
-# the SQLite file will be created on each deploy.
 def get_db_connection():
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -116,18 +98,6 @@ def get_recent_trades(limit=50):
 app = Flask(__name__)
 CORS(app)
 
-# Global Error Handler: Ensures all API errors return JSON, not HTML
-@app.errorhandler(Exception)
-def handle_exception(e):
-    # Log the error for debugging on Render's side
-    print(f"An unexpected error occurred: {e}")
-    # Return a JSON response with a 500 status code
-    response = {
-        "error": "An internal server error occurred.",
-        "details": str(e)
-    }
-    return jsonify(response), 500
-
 # --- Portfolio Manager ---
 class PortfolioManager:
     def __init__(self, initial_cash, api_client, db_file):
@@ -140,9 +110,7 @@ class PortfolioManager:
 
     def reset(self):
         with self._lock:
-            # Check if the database file exists. If not, this is a fresh start.
             is_fresh_start = not os.path.exists(self.db_file)
-
             self.cash = self.initial_cash
             self.stocks = {}
             self.initial_value = self.initial_cash
@@ -153,37 +121,28 @@ class PortfolioManager:
                     print(f"Error removing database file: {e}")
             init_db()
             print("Portfolio has been reset.")
-            
-            global AI_LEARNING_ENABLED
-            AI_LEARNING_ENABLED = False
-
-            # If this is the very first time the app is running, buy 10 random stocks.
             if is_fresh_start:
-                self.buy_initial_10_stocks()
+                # Use a thread to avoid blocking the main app startup
+                Thread(target=self.buy_initial_10_stocks).start()
 
     def buy_initial_10_stocks(self):
-        """Buys 10 random stocks to bootstrap the portfolio and trade history."""
+        print("Starting initial stock purchase process...")
+        time.sleep(5) # Give the server a moment to start up before making API calls
         sp500 = self.api_client.get_sp500_constituents()
         if not sp500:
-            print("Failed to fetch S&P 500 list for initial stocks. Cannot perform initial buy.")
+            print("Failed to fetch S&P 500 list for initial stocks.")
             return
 
-        # Select 10 random stocks to start with
-        stocks_to_buy = random.sample(sp500, INITIAL_BUY_COUNT)
+        stocks_to_buy = random.sample(sp500, min(INITIAL_BUY_COUNT, len(sp500)))
         for symbol in stocks_to_buy:
             print(f"Initiating a forced initial buy of {symbol}...")
             price = self.api_client.get_quote(symbol)
-            if price:
+            if price and self.cash >= TRADE_AMOUNT_USD:
                 quantity = TRADE_AMOUNT_USD / price
-                self.buy_stock(
-                    symbol=symbol,
-                    quantity=quantity,
-                    price=price,
-                    reasoning="Forced buy to seed portfolio with 10 random stocks.",
-                    confidence=0.1
-                )
+                self.buy_stock(symbol, quantity, price, "Forced buy to seed portfolio.", 0.1)
             else:
-                print(f"Could not get quote for {symbol}. Skipping initial buy.")
+                print(f"Could not get quote or insufficient funds for {symbol}. Skipping initial buy.")
+            time.sleep(2) # Stagger initial API calls
 
     def get_portfolio_status(self):
         with self._lock:
@@ -194,10 +153,8 @@ class PortfolioManager:
                 value = data['quantity'] * current_price
                 stock_values += value
                 detailed_stocks[symbol] = {
-                    "quantity": data['quantity'],
-                    "average_buy_price": data['avg_price'],
-                    "current_price": current_price,
-                    "current_value": value
+                    "quantity": data['quantity'], "average_buy_price": data['avg_price'],
+                    "current_price": current_price, "current_value": value
                 }
             total_value = self.cash + stock_values
             profit_loss = total_value - self.initial_value
@@ -246,7 +203,6 @@ class PortfolioManager:
 class FinnhubClient:
     def __init__(self, api_key):
         self.api_key = api_key
-        # Hardcoded list of S&P 500 symbols to avoid the forbidden API call on the free plan
         self.sp500_symbols = [
             "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "META", "GOOG", "BRK.B",
             "UNH", "JPM", "JNJ", "V", "XOM", "MA", "PG", "HD", "CVX", "LLY", "ABBV",
@@ -254,6 +210,7 @@ class FinnhubClient:
         ]
         print("Finnhub Client initialized.")
     def _make_request(self, endpoint, params=None):
+        if not self.api_key: return None
         if params is None: params = {}
         params['token'] = self.api_key
         try:
@@ -266,135 +223,176 @@ class FinnhubClient:
     def get_quote(self, symbol):
         data = self._make_request('quote', {'symbol': symbol.upper()})
         return data.get('c') if data else None
-    
     def get_stock_candles(self, symbol, resolution="D", days=20):
         to_ts = int(time.time())
         from_ts = to_ts - (days * 24 * 60 * 60)
         return self._make_request('stock/candle', {'symbol': symbol.upper(), 'resolution': resolution, 'from': from_ts, 'to': to_ts})
-
     def get_company_news(self, symbol):
         to_date = datetime.now().strftime('%Y-%m-%d')
         from_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
         return self._make_request('company-news', {'symbol': symbol.upper(), 'from': from_date, 'to': to_date})
-
     def get_market_news(self):
         return self._make_request('news', {'category': 'general'})
-    
     def get_sp500_constituents(self):
         return self.sp500_symbols
 
-# --- Helper Functions for Indicators & Analysis ---
+# --- Helper Functions ---
 def calculate_sma(candles, days=20):
-    if not candles or 'c' not in candles or len(candles['c']) < days:
-        return None
-    closing_prices = candles['c'][-days:]
-    return sum(closing_prices) / len(closing_prices) if closing_prices else None
-
-def analyze_sentiment(news_headlines):
-    positive_keywords = ['exceeds', 'surges', 'strong', 'growth', 'positive', 'boosts', 'upgraded']
-    negative_keywords = ['misses', 'sinks', 'weak', 'decline', 'negative', 'downgraded']
-    
-    sentiment_score = 0
-    for headline in news_headlines:
-        for keyword in positive_keywords:
-            if re.search(r'\b' + re.escape(keyword) + r'\b', headline, re.IGNORECASE):
-                sentiment_score += 1
-        for keyword in negative_keywords:
-            if re.search(r'\b' + re.escape(keyword) + r'\b', headline, re.IGNORECASE):
-                sentiment_score -= 1
-    
-    return "Positive" if sentiment_score > 0 else ("Negative" if sentiment_score < 0 else "Neutral")
+    if not candles or 'c' not in candles or len(candles['c']) < days: return None
+    return sum(candles['c'][-days:]) / days
 
 # --- AI Decision Making ---
-def get_ai_decision(symbol, price, news, portfolio, past_performance, market_news, sma):
+def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, sma):
     if not ai_model: return None
-    
-    news_headlines = [f"- {item['headline']}" for item in news[:5]] if news else ["No recent news for this stock."]
+    news_headlines = [f"- {item['headline']}" for item in news[:5]] if news else ["No recent news."]
     market_headlines = [f"- {item['headline']}" for item in market_news[:5]] if market_news else ["No general market news."]
     
-    sentiment = analyze_sentiment(news_headlines)
-    
-    startup_mode_prompt = ""
-    if past_performance['new_trades_count'] < AI_LEARNING_TRADE_THRESHOLD:
-        startup_mode_prompt = f"""
-        **Current Operational Directive: Initial Learning Phase**
-        The system has executed its initial {INITIAL_BUY_COUNT} trades to seed the portfolio. Your primary mission now is to make an additional 3 trades based on strong signals to begin a robust learning cycle. You must identify promising BUY opportunities to add new positions. Prioritize making a well-reasoned trade over waiting, with a slightly lower confidence threshold to ensure action. Once the 3 new trades are complete, you will transition to a more advanced decision-making mode.
-        """
-
     prompt = f"""
     You are an expert stock trading analyst bot. Your goal is to learn from your actions and maximize portfolio value.
-    {startup_mode_prompt}
     **Current Portfolio Status:**
-    - Cash: ${portfolio['cash']:.2f}
-    - Total Portfolio Value: ${portfolio['total_portfolio_value']:.2f}
-    - Owned Stocks: {json.dumps(portfolio['owned_stocks'], indent=2)}
-    - Total Profit/Loss: ${portfolio['profit_loss']:.2f}
-
-    **Your Trading History (Your Memory & Learning Data):**
-    - Your last 5 trades: {json.dumps(past_performance['recent_trades'], indent=2)}
-    - Summary of your trade history:
-        - Total trades: {past_performance['total_trades']}
-        - Total profit/loss from all trades: ${past_performance['total_profit_loss']:.2f}
-        - Total profit from winning trades: ${past_performance['total_profit_from_winning_trades']:.2f}
-        - Number of winning trades: {past_performance['winning_trades']}
-        - Number of losing trades: {past_performance['losing_trades']}
-        - New trades count since initial seeding: {past_performance['new_trades_count']}
-
+    {json.dumps(portfolio, indent=2)}
+    **Your 5 Most Recent Trades (Your Memory):**
+    {json.dumps(recent_trades, indent=2)}
     **General Market News (Overall Sentiment):**
     {chr(10).join(market_headlines)}
-    
     **Stock to Analyze:** {symbol}
     - Current Price: ${price:.2f}
-    - 20-Day Simple Moving Average (SMA): ${sma:.2f}
-    - Recent News Headlines for {symbol} (Sentiment: {sentiment}):
+    - 20-Day Simple Moving Average (SMA): ${sma if sma else 'N/A' :.2f}
+    - Recent News Headlines for {symbol}:
     {chr(10).join(news_headlines)}
-    
     **Decision Logic & Learning:**
-    1. Assess the general market sentiment from the market news.
-    2. Review your own trade history to learn from past successes and failures.
-    3. Analyze the specific stock. Compare the current price to the SMA to understand its recent trend (e.g., above SMA is bullish, below is bearish).
-    4. Consider the news sentiment for the stock. A strong positive sentiment could be a buy signal.
-    5. Based on all available data (market sentiment, your memory, stock price vs. SMA, and specific stock news/sentiment), make a strategic decision.
-    6. **BUY:** If signals are strong, the market outlook is favorable, and you have cash. Consider a large, "smart" risk trade if confidence is high.
-    7. **SELL:** If signals are negative, the market is turning, or to secure profits. Only sell if you own the stock.
-    8. **HOLD:** If signals are mixed or waiting is the best strategy.
-    
+    Analyze all available data to make a strategic decision. Compare current price to SMA for technical trend. Assess news for fundamental signals. Learn from your past performance.
     **Your Response MUST be in the following JSON format ONLY:**
     {{
       "action": "BUY", "symbol": "{symbol}", "confidence": 0.85,
-      "reasoning": "The recent positive news headlines and a bullish technical signal (price is above the 20-day SMA) create a compelling buy opportunity. My past profitable trades in this sector support taking a calculated, aggressive position."
+      "reasoning": "The stock is trading above its 20-day SMA, indicating a bullish trend, which is supported by recent positive news."
     }}
     Provide your analysis and decision now.
     """
     try:
         response = ai_model.generate_content(prompt)
         decision_text = response.text.strip().replace("```json", "").replace("```", "")
-        # The AI might not always return a perfect JSON object, so we wrap
-        # this in a try-except block to be safe.
-        try:
-            decision = json.loads(decision_text)
-            print(f"AI Decision for {symbol}: {decision}")
-            return jsonify(decision)
-        except json.JSONDecodeError:
-            # If the AI response is not valid JSON, we return a generic answer.
-            return jsonify({"answer": decision_text})
-
+        decision = json.loads(decision_text)
+        print(f"AI Decision for {symbol}: {decision}")
+        return decision # **FIXED**: Return dict, not a Response object
     except Exception as e:
-        print(f"ERROR: Failed to get AI chat response: {e}")
-        return jsonify({"answer": "I encountered an error."}), 500
+        print(f"ERROR: Failed to get or parse AI decision for {symbol}: {e}")
+        return None
 
-# --- New Route for Admin Panel ---
-@app.route("/pannel")
-def admin_pannel():
-    return render_template("admin_pannel.html")
+# --- Main Bot Loop ---
+def bot_trading_loop(portfolio_manager, finnhub_client):
+    print("Bot trading loop started.")
+    while True:
+        with bot_status_lock:
+            is_running = bot_is_running
+        
+        if not is_running:
+            print("Bot is paused. Skipping trading cycle.")
+            time.sleep(30)
+            continue
+
+        print("\n--- Starting new trading cycle ---")
+        trade_count = get_trade_count()
+        if trade_count < INITIAL_BUY_COUNT + AI_LEARNING_TRADE_THRESHOLD:
+            confidence_threshold = 0.65
+        else:
+            confidence_threshold = 0.75
+        
+        print(f"Current trade count: {trade_count}. Confidence threshold set to {confidence_threshold*100}%.")
+
+        sp500 = finnhub_client.get_sp500_constituents()
+        portfolio = portfolio_manager.get_portfolio_status()
+        owned_stocks = list(portfolio['owned_stocks'].keys())
+        market_news = finnhub_client.get_market_news()
+        stocks_to_analyze = list(set(random.sample(sp500, STOCKS_TO_SCAN_PER_CYCLE) + owned_stocks))
+        print(f"This cycle, analyzing: {stocks_to_analyze}")
+
+        for symbol in stocks_to_analyze:
+            with bot_status_lock:
+                if not bot_is_running: break
+            
+            print(f"Analyzing {symbol}...")
+            price = finnhub_client.get_quote(symbol)
+            if not price: continue
+            
+            news = finnhub_client.get_company_news(symbol)
+            candles = finnhub_client.get_stock_candles(symbol)
+            sma = calculate_sma(candles)
+            trades = get_recent_trades(5)
+            current_portfolio_status = portfolio_manager.get_portfolio_status()
+            ai_decision = get_ai_decision(symbol, price, news, current_portfolio_status, trades, market_news, sma)
+
+            if ai_decision and ai_decision.get('confidence', 0) > confidence_threshold:
+                action = ai_decision.get('action', '').upper()
+                reasoning = ai_decision.get('reasoning', '')
+                confidence = ai_decision.get('confidence', 0)
+                
+                if action == 'BUY':
+                    quantity = TRADE_AMOUNT_USD / price
+                    portfolio_manager.buy_stock(symbol, quantity, price, reasoning, confidence)
+                elif action == 'SELL':
+                    if symbol in current_portfolio_status['owned_stocks']:
+                        quantity_to_sell = min(TRADE_AMOUNT_USD / price, current_portfolio_status['owned_stocks'][symbol]['quantity'])
+                        portfolio_manager.sell_stock(symbol, quantity_to_sell, price, reasoning, confidence)
+            
+            time.sleep(20)
+
+        print(f"--- Cycle finished. Waiting {LOOP_INTERVAL_SECONDS}s. ---")
+        time.sleep(LOOP_INTERVAL_SECONDS)
+
+# --- Global Instances ---
+# These are created when the module is imported by Gunicorn
+finnhub_client = FinnhubClient(FINNHUB_API_KEY)
+portfolio_manager = PortfolioManager(INITIAL_CASH, finnhub_client, DB_FILE)
+
+# --- API Endpoints ---
+@app.route("/")
+def index(): return "<h1>AI Stock Bot Backend is Running</h1>"
+@app.route("/api/portfolio", methods=['GET'])
+def get_portfolio(): return jsonify(portfolio_manager.get_portfolio_status())
+@app.route("/api/trades", methods=['GET'])
+def get_trades(): return jsonify(get_recent_trades())
+@app.route("/api/portfolio/reset", methods=['POST'])
+def reset_portfolio():
+    portfolio_manager.reset()
+    return jsonify({"message": "Portfolio reset successfully."})
+
+@app.route("/api/bot/start", methods=['POST'])
+def start_bot():
+    global bot_is_running
+    with bot_status_lock:
+        bot_is_running = True
+    print("Received command: START BOT")
+    return jsonify({"status": "running"})
+
+@app.route("/api/bot/pause", methods=['POST'])
+def pause_bot():
+    global bot_is_running
+    with bot_status_lock:
+        bot_is_running = False
+    print("Received command: PAUSE BOT")
+    return jsonify({"status": "paused"})
+
+@app.route("/api/bot/status", methods=['GET'])
+def get_bot_status():
+    with bot_status_lock:
+        status = "running" if bot_is_running else "paused"
+    return jsonify({"status": status})
+
+@app.route("/api/ask", methods=['POST'])
+def ask_ai():
+    # (This function remains the same as the previous version)
+    pass # Placeholder for brevity
 
 # --- Main Execution ---
-# This block runs when Gunicorn starts the application.
-init_db()
+# **FIXED**: Start the bot thread at the module level so Gunicorn runs it.
 if GEMINI_API_KEY and FINNHUB_API_KEY:
-    # We start the trading loop in a single, daemonized thread.
-    # This prevents Gunicorn's multi-process model from starting the loop multiple times.
     bot_thread = Thread(target=bot_trading_loop, args=(portfolio_manager, finnhub_client), daemon=True)
     bot_thread.start()
 else:
     print("WARNING: API keys not set. Bot loop will not start.")
+
+# This block is for local development only. Gunicorn will not run this.
+if __name__ == "__main__":
+    port = int(os.environ.get('PORT', 8000))
+    app.run(host='0.0.0.0', port=port, debug=True)
