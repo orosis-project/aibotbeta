@@ -279,7 +279,7 @@ def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, 
         decision_text = response.text.strip().replace("```json", "").replace("```", "")
         decision = json.loads(decision_text)
         print(f"AI Decision for {symbol}: {decision}")
-        return decision # **FIXED**: Return a Python dictionary
+        return decision
     except Exception as e:
         print(f"ERROR: Failed to get or parse AI decision for {symbol}: {e}")
         return None
@@ -386,9 +386,13 @@ def get_bot_status():
 @app.route("/api/ask", methods=['POST'])
 def ask_ai():
     question = request.json.get('question')
-    if not question or not ai_model:
-        return jsonify({"answer": "AI is unavailable or no question was asked."}), 400
+    if not question:
+        return jsonify({"answer": "No question was provided."}), 400
     
+    # **FIXED**: Add a clear check for the AI model and API key
+    if not ai_model:
+        return jsonify({"answer": "AI Core is offline. The GEMINI_API_KEY is likely missing or invalid. Please check the environment variables on Render."}), 503
+
     portfolio = portfolio_manager.get_portfolio_status()
     trades = get_recent_trades(5)
     market_news = finnhub_client.get_market_news()
@@ -410,20 +414,19 @@ def ask_ai():
         response = ai_model.generate_content(prompt)
         return jsonify({"answer": response.text})
     except Exception as e:
+        # **FIXED**: Return the specific error message from the AI API
+        error_message = f"The AI model failed to respond. This is often due to an invalid API key or a problem with the Google AI service. Error details: {str(e)}"
         print(f"ERROR: Failed to get AI chat response: {e}")
-        return jsonify({"answer": "I encountered an error."}), 500
+        return jsonify({"answer": error_message}), 500
 
 # --- Main Execution ---
-# **FIXED**: Start the bot thread at the module level so Gunicorn runs it.
 if GEMINI_API_KEY and FINNHUB_API_KEY:
-    # This check ensures the thread only starts once.
     if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
         bot_thread = Thread(target=bot_trading_loop, args=(portfolio_manager, finnhub_client), daemon=True)
         bot_thread.start()
 else:
     print("WARNING: API keys not set. Bot loop will not start.")
 
-# This block is for local development only. Gunicorn will not run this.
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 8000))
     app.run(host='0.0.0.0', port=port, debug=True)
