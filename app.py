@@ -15,9 +15,9 @@ from datetime import datetime, timedelta, timezone
 import random
 
 # --- Configuration ---
-# Use a list of Gemini API keys
+# Use a list of Gemini API keys with the new variable names
 GEMINI_API_KEYS = [
-    os.environ.get("GEMINI_API_KEY_1"),
+    os.environ.get("GEMINI_API_KEY"),
     os.environ.get("GEMINI_API_KEY_2"),
     os.environ.get("GEMINI_API_KEY_3")
 ]
@@ -53,26 +53,43 @@ def configure_ai():
         if ai_model_configured:
             return
         
-        # Get the current API key from the list
-        gemini_api_key = GEMINI_API_KEYS[current_api_key_index]
-        
-        if gemini_api_key:
-            try:
-                genai.configure(api_key=gemini_api_key)
-                ai_model = genai.GenerativeModel('gemini-1.5-flash')
-                print(f"Gemini AI model configured with key index {current_api_key_index}.")
-                ai_model_configured = True
-            except Exception as e:
-                print(f"ERROR: Failed to configure Gemini AI with key {current_api_key_index}: {e}")
-                ai_model_configured = False
-                # If configuration fails, try the next key
+        # Ensure there is at least one API key available
+        if not GEMINI_API_KEYS or all(key is None for key in GEMINI_API_KEYS):
+            print("ERROR: No Gemini API keys found in environment variables. Bot will not run.")
+            all_keys_exhausted = True
+            bot_is_running = False
+            return
+            
+        # Find the first available API key
+        available_key_found = False
+        start_index = current_api_key_index
+        while not available_key_found:
+            gemini_api_key = GEMINI_API_KEYS[current_api_key_index]
+            if gemini_api_key:
+                try:
+                    genai.configure(api_key=gemini_api_key)
+                    ai_model = genai.GenerativeModel('gemini-1.5-flash')
+                    print(f"Gemini AI model configured with key index {current_api_key_index}.")
+                    ai_model_configured = True
+                    available_key_found = True
+                except Exception as e:
+                    print(f"ERROR: Failed to configure Gemini AI with key {current_api_key_index}: {e}")
+                    ai_model_configured = False
+                    current_api_key_index = (current_api_key_index + 1) % len(GEMINI_API_KEYS)
+                    if current_api_key_index == start_index:
+                        # We've looped through all keys and none worked
+                        print("All API keys failed to configure. Pausing bot.")
+                        all_keys_exhausted = True
+                        bot_is_running = False
+                        break
+            else:
+                # Key is None, try the next one
                 current_api_key_index = (current_api_key_index + 1) % len(GEMINI_API_KEYS)
-                if current_api_key_index == 0:
-                    print("All API keys failed to configure. Pausing bot.")
+                if current_api_key_index == start_index:
+                    print("No valid Gemini API keys found. Pausing bot.")
                     all_keys_exhausted = True
                     bot_is_running = False
-        else:
-            print(f"WARNING: Gemini API key at index {current_api_key_index} not found in environment.")
+                    break
 
 
 # --- Database Functions ---
@@ -143,6 +160,10 @@ class PortfolioManager:
         self.initial_value = initial_cash
         self._reconstruct_portfolio_from_db()
         print("Portfolio Manager initialized and reconstructed.")
+        # Check if initial stocks need to be purchased
+        if not get_all_trades():
+            print("No trades found. Initiating initial stock purchase.")
+            Thread(target=self.buy_initial_stocks).start()
 
     def _reconstruct_portfolio_from_db(self):
         with self._lock:
@@ -463,6 +484,8 @@ def scheduler_loop():
 
 
 # --- Global Instances & App Initialization ---
+# The check for the initial purchase has been moved to the PortfolioManager's __init__ method
+# to ensure it happens reliably on first start.
 init_db()
 configure_ai()
 finnhub_client = FinnhubClient()
@@ -540,11 +563,13 @@ def ask_ai():
 
 # --- Main Execution ---
 if __name__ == "__main__":
-    if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
-        bot_thread = Thread(target=bot_trading_loop, args=(portfolio_manager, finnhub_client), daemon=True)
-        bot_thread.start()
-        scheduler_thread = Thread(target=scheduler_loop, daemon=True)
-        scheduler_thread.start()
+    # The check `if not app.debug...` is removed and `use_reloader=False` is added
+    # to ensure background threads are not duplicated, which is a common issue with
+    # Flask's built-in reloader.
+    bot_thread = Thread(target=bot_trading_loop, args=(portfolio_manager, finnhub_client), daemon=True)
+    bot_thread.start()
+    scheduler_thread = Thread(target=scheduler_loop, daemon=True)
+    scheduler_thread.start()
 
     port = int(os.environ.get('PORT', 8000))
     app.run(host='0.0.0.0', port=port, debug=True, use_reloader=False)
