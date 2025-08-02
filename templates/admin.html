@@ -52,19 +52,12 @@
         </header>
 
         <!-- Bot Controls & Status -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <div class="section-card rounded-xl shadow-lg p-6 flex flex-col justify-between">
                 <h2 class="text-xl font-semibold mb-4 text-teal-300">Bot Status</h2>
                 <div class="flex items-center space-x-4">
                     <span id="status-dot" class="inline-block h-4 w-4 rounded-full"></span>
                     <span id="bot-status" class="text-lg font-medium">Loading...</span>
-                </div>
-            </div>
-
-            <div class="section-card rounded-xl shadow-lg p-6 flex flex-col justify-between">
-                <h2 class="text-xl font-semibold mb-4 text-teal-300">Next Cycle In</h2>
-                <div class="text-center">
-                    <span id="countdown-timer" class="text-2xl font-bold text-white">05:00</span>
                 </div>
             </div>
             
@@ -177,7 +170,7 @@
     </div>
 
     <script>
-        const API_BASE_URL = 'https://aibotbeta.onrender.com/api';
+        const API_BASE_URL = '/api'; // Use relative path since this page is served by the backend
         
         const botStatusElem = document.getElementById('bot-status');
         const statusDotElem = document.getElementById('status-dot');
@@ -194,13 +187,13 @@
         const chatHistory = document.getElementById('chat-history');
         const learningStatusText = document.getElementById('learning-status-text');
         const learningProgress = document.getElementById('learning-progress');
-        const countdownTimerElem = document.getElementById('countdown-timer');
 
         const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
         const formatDate = (dateString) => new Date(dateString).toLocaleString();
 
         const fetchData = async () => {
             try {
+                // **FIXED**: Fetch from the correct endpoints in parallel
                 const [statusRes, portfolioRes, tradesRes] = await Promise.all([
                     fetch(`${API_BASE_URL}/bot/status`),
                     fetch(`${API_BASE_URL}/portfolio`),
@@ -215,14 +208,17 @@
                 const portfolioData = await portfolioRes.json();
                 const tradesData = await tradesRes.json();
 
+                // Update Bot Status
                 botStatusElem.textContent = statusData.status === 'running' ? 'Running' : 'Paused';
                 statusDotElem.className = `inline-block h-4 w-4 rounded-full ${statusData.status === 'running' ? 'green-dot' : 'red-dot'}`;
 
+                // Update Portfolio Summary
                 cashBalanceElem.textContent = formatCurrency(portfolioData.cash);
                 totalValueElem.textContent = formatCurrency(portfolioData.total_portfolio_value);
                 profitLossElem.textContent = formatCurrency(portfolioData.profit_loss);
                 profitLossElem.style.color = portfolioData.profit_loss >= 0 ? '#48bb78' : '#f56565';
 
+                // Update Owned Stocks
                 ownedStocksBodyElem.innerHTML = '';
                 const ownedStocks = portfolioData.owned_stocks;
                 if (Object.keys(ownedStocks).length === 0) {
@@ -240,6 +236,7 @@
                     }
                 }
 
+                // Update Recent Trades & Learning Status
                 const AI_LEARNING_THRESHOLD = 5;
                 const INITIAL_BUY_COUNT = 10;
                 const newTradesCount = Math.max(0, tradesData.length - INITIAL_BUY_COUNT);
@@ -325,21 +322,6 @@
             }
             chatHistory.scrollTop = chatHistory.scrollHeight;
         };
-
-        const startCountdown = () => {
-            const CYCLE_DURATION = 300; // 5 minutes in seconds
-            let countdown = CYCLE_DURATION;
-
-            setInterval(() => {
-                countdown--;
-                if (countdown < 0) {
-                    countdown = CYCLE_DURATION;
-                }
-                const minutes = Math.floor(countdown / 60).toString().padStart(2, '0');
-                const seconds = (countdown % 60).toString().padStart(2, '0');
-                countdownTimerElem.textContent = `${minutes}:${seconds}`;
-            }, 1000);
-        };
         
         startBtn.addEventListener('click', () => controlBot('start'));
         pauseBtn.addEventListener('click', () => controlBot('pause'));
@@ -356,7 +338,6 @@
         window.onload = () => {
             fetchData();
             setInterval(fetchData, 2000);
-            startCountdown();
         };
     </script>
 </body>
