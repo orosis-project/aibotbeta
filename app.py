@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Backend with Initial Buy-in, Delayed AI Learning, and Gunicorn Fixes
+# Final Version: Backend with Chat Fix and Gunicorn Compatibility
 
 import os
 import time
@@ -16,8 +16,8 @@ import re
 
 # --- Configuration ---
 # Using os.environ to get keys from Render's environment variables
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY")
+GEMINI_API_KEY = os.environ.get("AIzaSyCFShQd4JEqv8AQUqtDyQ7iCDNWMHjId_c")
+FINNHUB_API_KEY = os.environ.get("d25mi11r01qhge4das6gd25mi11r01qhge4das70")
 
 FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
 INITIAL_CASH = 5000.00
@@ -25,13 +25,12 @@ DB_FILE = "trades.db"
 TRADE_AMOUNT_USD = 500
 LOOP_INTERVAL_SECONDS = 300  # 5 minutes
 STOCKS_TO_SCAN_PER_CYCLE = 10
-# Delayed AI Learning configuration
 AI_LEARNING_TRADE_THRESHOLD = 3
 INITIAL_BUY_COUNT = 10
 
 # --- Bot State ---
 bot_status_lock = Lock()
-bot_is_running = True # Bot starts in a running state by default
+bot_is_running = True
 
 # --- AI Configuration ---
 ai_model = None
@@ -122,12 +121,11 @@ class PortfolioManager:
             init_db()
             print("Portfolio has been reset.")
             if is_fresh_start:
-                # Use a thread to avoid blocking the main app startup
                 Thread(target=self.buy_initial_10_stocks).start()
 
     def buy_initial_10_stocks(self):
         print("Starting initial stock purchase process...")
-        time.sleep(5) # Give the server a moment to start up before making API calls
+        time.sleep(5)
         sp500 = self.api_client.get_sp500_constituents()
         if not sp500:
             print("Failed to fetch S&P 500 list for initial stocks.")
@@ -141,8 +139,8 @@ class PortfolioManager:
                 quantity = TRADE_AMOUNT_USD / price
                 self.buy_stock(symbol, quantity, price, "Forced buy to seed portfolio.", 0.1)
             else:
-                print(f"Could not get quote or insufficient funds for {symbol}. Skipping initial buy.")
-            time.sleep(2) # Stagger initial API calls
+                print(f"Could not get quote or insufficient funds for {symbol}.")
+            time.sleep(2)
 
     def get_portfolio_status(self):
         with self._lock:
@@ -242,13 +240,20 @@ def calculate_sma(candles, days=20):
     return sum(candles['c'][-days:]) / days
 
 # --- AI Decision Making ---
-def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, sma):
+def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, sma, trade_count):
     if not ai_model: return None
     news_headlines = [f"- {item['headline']}" for item in news[:5]] if news else ["No recent news."]
     market_headlines = [f"- {item['headline']}" for item in market_news[:5]] if market_news else ["No general market news."]
     
+    startup_mode_prompt = ""
+    if trade_count < INITIAL_BUY_COUNT + AI_LEARNING_TRADE_THRESHOLD:
+        startup_mode_prompt = f"""
+        **Current Operational Directive: Initial Learning Phase**
+        You are in a learning phase. Your goal is to make {AI_LEARNING_TRADE_THRESHOLD} trades based on strong signals to build a robust learning history. Prioritize making well-reasoned trades over waiting.
+        """
     prompt = f"""
-    You are an expert stock trading analyst bot. Your goal is to learn from your actions and maximize portfolio value.
+    You are an expert stock trading analyst bot.
+    {startup_mode_prompt}
     **Current Portfolio Status:**
     {json.dumps(portfolio, indent=2)}
     **Your 5 Most Recent Trades (Your Memory):**
@@ -274,7 +279,7 @@ def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, 
         decision_text = response.text.strip().replace("```json", "").replace("```", "")
         decision = json.loads(decision_text)
         print(f"AI Decision for {symbol}: {decision}")
-        return decision # **FIXED**: Return dict, not a Response object
+        return decision # **FIXED**: Return a Python dictionary
     except Exception as e:
         print(f"ERROR: Failed to get or parse AI decision for {symbol}: {e}")
         return None
@@ -320,7 +325,7 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
             sma = calculate_sma(candles)
             trades = get_recent_trades(5)
             current_portfolio_status = portfolio_manager.get_portfolio_status()
-            ai_decision = get_ai_decision(symbol, price, news, current_portfolio_status, trades, market_news, sma)
+            ai_decision = get_ai_decision(symbol, price, news, current_portfolio_status, trades, market_news, sma, trade_count)
 
             if ai_decision and ai_decision.get('confidence', 0) > confidence_threshold:
                 action = ai_decision.get('action', '').upper()
@@ -341,7 +346,6 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
         time.sleep(LOOP_INTERVAL_SECONDS)
 
 # --- Global Instances ---
-# These are created when the module is imported by Gunicorn
 finnhub_client = FinnhubClient(FINNHUB_API_KEY)
 portfolio_manager = PortfolioManager(INITIAL_CASH, finnhub_client, DB_FILE)
 
@@ -381,14 +385,41 @@ def get_bot_status():
 
 @app.route("/api/ask", methods=['POST'])
 def ask_ai():
-    # (This function remains the same as the previous version)
-    pass # Placeholder for brevity
+    question = request.json.get('question')
+    if not question or not ai_model:
+        return jsonify({"answer": "AI is unavailable or no question was asked."}), 400
+    
+    portfolio = portfolio_manager.get_portfolio_status()
+    trades = get_recent_trades(5)
+    market_news = finnhub_client.get_market_news()
+    market_headlines = [f"- {item['headline']}" for item in market_news[:5]] if market_news else ["No general market news."]
+
+    prompt = f"""
+    You are the AI core of a stock trading bot. An administrator is asking you a question.
+    Based on your current status and recent history, provide a helpful and concise answer.
+    **Current Portfolio Status:**
+    {json.dumps(portfolio, indent=2)}
+    **Your 5 Most Recent Trades (Your Memory):**
+    {json.dumps(trades, indent=2)}
+    **General Market News (Overall Sentiment):**
+    {chr(10).join(market_headlines)}
+    **Administrator's Question:** "{question}"
+    **Your Answer:**
+    """
+    try:
+        response = ai_model.generate_content(prompt)
+        return jsonify({"answer": response.text})
+    except Exception as e:
+        print(f"ERROR: Failed to get AI chat response: {e}")
+        return jsonify({"answer": "I encountered an error."}), 500
 
 # --- Main Execution ---
 # **FIXED**: Start the bot thread at the module level so Gunicorn runs it.
 if GEMINI_API_KEY and FINNHUB_API_KEY:
-    bot_thread = Thread(target=bot_trading_loop, args=(portfolio_manager, finnhub_client), daemon=True)
-    bot_thread.start()
+    # This check ensures the thread only starts once.
+    if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+        bot_thread = Thread(target=bot_trading_loop, args=(portfolio_manager, finnhub_client), daemon=True)
+        bot_thread.start()
 else:
     print("WARNING: API keys not set. Bot loop will not start.")
 
