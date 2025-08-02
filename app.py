@@ -182,7 +182,6 @@ class PortfolioManager:
 
     def get_portfolio_status(self):
         with self._lock:
-            # **FIXED**: Always reconstruct before getting status to ensure consistency
             self._reconstruct_portfolio_from_db()
             stock_values = 0.0
             detailed_stocks = {}
@@ -273,11 +272,104 @@ class FinnhubClient:
         return self.sp500_symbols
 
 # --- AI Decision Making & Bot Loop ---
-# (These sections remain the same)
 def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, trade_count):
-    pass
+    if not ai_model:
+        configure_ai()
+        if not ai_model: return None
+
+    news_headlines = [f"- {item['headline']}" for item in news[:5]] if news else ["No recent news."]
+    market_headlines = [f"- {item['headline']}" for item in market_news[:5]] if market_news else ["No general market news."]
+    
+    prompt = f"""
+    You are an expert stock trading analyst bot.
+    **Current Portfolio Status:**
+    {json.dumps(portfolio, indent=2)}
+    **Your 5 Most Recent Trades (Your Memory):**
+    {json.dumps(recent_trades, indent=2)}
+    **General Market News (Overall Sentiment):**
+    {chr(10).join(market_headlines)}
+    **Stock to Analyze:** {symbol}
+    - Current Price: ${price:.2f}
+    - Recent News Headlines for {symbol}:
+    {chr(10).join(news_headlines)}
+    **Decision Logic & Learning:**
+    Analyze all available data to make a strategic decision.
+    **Your Response MUST be in the following JSON format ONLY:**
+    {{
+      "action": "BUY", "symbol": "{symbol}", "confidence": 0.85,
+      "reasoning": "The stock is showing a bullish trend, which is supported by recent positive news."
+    }}
+    Provide your analysis and decision now.
+    """
+    try:
+        response = ai_model.generate_content(prompt)
+        decision_text = response.text.strip().replace("```json", "").replace("```", "")
+        decision = json.loads(decision_text)
+        print(f"AI Decision for {symbol}: {decision}")
+        return decision
+    except Exception as e:
+        print(f"ERROR: Failed to get or parse AI decision for {symbol}: {e}")
+        return None
+
 def bot_trading_loop(portfolio_manager, finnhub_client):
-    pass
+    print("Bot trading loop started. Waiting for API keys...")
+    while not os.environ.get("GEMINI_API_KEY") or not os.environ.get("FINNHUB_API_KEY"):
+        print("API keys not found. Retrying in 30 seconds...")
+        time.sleep(30)
+    
+    print("API keys found. Trading loop is now active.")
+    
+    while True:
+        with bot_status_lock:
+            is_running = bot_is_running
+        
+        if not is_running:
+            print("Bot is paused. Skipping trading cycle.")
+            time.sleep(30)
+            continue
+
+        print("\n--- Starting new trading cycle ---")
+        trade_count = get_trade_count()
+        confidence_threshold = 0.65 if trade_count < (INITIAL_BUY_COUNT + AI_LEARNING_TRADE_THRESHOLD) else 0.75
+        
+        print(f"Current trade count: {trade_count}. Confidence threshold set to {confidence_threshold*100}%.")
+
+        sp500 = finnhub_client.get_sp500_constituents()
+        portfolio = portfolio_manager.get_portfolio_status()
+        owned_stocks = list(portfolio['owned_stocks'].keys())
+        market_news = finnhub_client.get_market_news()
+        stocks_to_analyze = list(set(random.sample(sp500, STOCKS_TO_SCAN_PER_CYCLE) + owned_stocks))
+        print(f"This cycle, analyzing: {stocks_to_analyze}")
+
+        for symbol in stocks_to_analyze:
+            if not bot_is_running: break
+            
+            print(f"Analyzing {symbol}...")
+            price = finnhub_client.get_quote(symbol)
+            if not price: continue
+            
+            news = finnhub_client.get_company_news(symbol)
+            trades = get_recent_trades(5)
+            current_portfolio_status = portfolio_manager.get_portfolio_status()
+            ai_decision = get_ai_decision(symbol, price, news, current_portfolio_status, trades, market_news, trade_count)
+
+            if ai_decision and ai_decision.get('confidence', 0) > confidence_threshold:
+                action = ai_decision.get('action', '').upper()
+                reasoning = ai_decision.get('reasoning', '')
+                confidence = ai_decision.get('confidence', 0)
+                
+                if action == 'BUY':
+                    quantity = TRADE_AMOUNT_USD / price
+                    portfolio_manager.buy_stock(symbol, quantity, price, reasoning, confidence)
+                elif action == 'SELL':
+                    if symbol in current_portfolio_status['owned_stocks']:
+                        quantity_to_sell = min(TRADE_AMOUNT_USD / price, current_portfolio_status['owned_stocks'][symbol]['quantity'])
+                        portfolio_manager.sell_stock(symbol, quantity_to_sell, price, reasoning, confidence)
+            
+            time.sleep(20)
+
+        print(f"--- Cycle finished. Waiting {LOOP_INTERVAL_SECONDS}s. ---")
+        time.sleep(LOOP_INTERVAL_SECONDS)
 
 # --- Global Instances ---
 finnhub_client = FinnhubClient()
