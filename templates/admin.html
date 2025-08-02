@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Stock Bot Admin Panel</title>
-    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
@@ -51,7 +50,6 @@
             <p class="mt-2 text-lg text-gray-400">Monitor and control your automated trading bot.</p>
         </header>
 
-        <!-- Bot Controls & Status -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <div class="section-card rounded-xl shadow-lg p-6 flex flex-col justify-between">
                 <h2 class="text-xl font-semibold mb-4 text-teal-300">Bot Status</h2>
@@ -73,7 +71,6 @@
         
         <hr class="border-gray-700 mb-8">
 
-        <!-- Portfolio Summary -->
         <div class="section-card rounded-xl shadow-lg p-6 mb-8">
             <h2 class="text-2xl font-semibold mb-4 text-teal-300">Portfolio Summary</h2>
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 text-center">
@@ -94,7 +91,6 @@
 
         <hr class="border-gray-700 mb-8">
 
-        <!-- AI Learning Status -->
         <div class="section-card rounded-xl shadow-lg p-6 mb-8">
             <h2 class="text-2xl font-semibold mb-4 text-teal-300">AI Learning Status</h2>
             <div class="flex flex-col md:flex-row md:items-center space-y-2 md:space-y-0 md:space-x-4">
@@ -109,9 +105,7 @@
 
         <hr class="border-gray-700 mb-8">
 
-        <!-- Owned Stocks & Recent Trades -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-            <!-- Owned Stocks -->
             <div class="section-card rounded-xl shadow-lg p-6">
                 <h2 class="text-2xl font-semibold mb-4 text-teal-300">Owned Stocks</h2>
                 <div class="scrollable-content">
@@ -131,7 +125,6 @@
                 </div>
             </div>
             
-            <!-- Recent Trades -->
             <div class="section-card rounded-xl shadow-lg p-6">
                 <h2 class="text-2xl font-semibold mb-4 text-teal-300">Recent Trades</h2>
                 <div class="scrollable-content">
@@ -154,7 +147,6 @@
 
         <hr class="border-gray-700 mb-8">
         
-        <!-- AI Chat Interface -->
         <div class="section-card rounded-xl shadow-lg p-6">
             <h2 class="text-2xl font-semibold mb-4 text-teal-300">Ask the Bot</h2>
             <div id="chat-history" class="bg-gray-800 rounded-lg p-4 scrollable-content flex flex-col space-y-4 mb-4">
@@ -193,7 +185,6 @@
 
         const fetchData = async () => {
             try {
-                // **FIXED**: Fetch from the correct endpoints in parallel
                 const [statusRes, portfolioRes, tradesRes] = await Promise.all([
                     fetch(`${API_BASE_URL}/bot/status`),
                     fetch(`${API_BASE_URL}/portfolio`),
