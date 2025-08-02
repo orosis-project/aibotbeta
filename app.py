@@ -381,23 +381,16 @@ def get_ai_decision(symbol, price, news, portfolio, past_performance, market_new
 def admin_pannel():
     return render_template("admin_pannel.html")
 
-
-@app.before_first_request
-def start_bot_thread():
-    """Starts the bot thread before the first request is served."""
-    # This is a good solution for a single-threaded server.
-    # In a multi-process Gunicorn environment, this will run for each worker.
-    # This is an acceptable trade-off for simplicity in a non-critical context.
+# --- Main Execution ---
+if __name__ == "__main__":
+    init_db()
     if GEMINI_API_KEY and FINNHUB_API_KEY:
         bot_thread = Thread(target=bot_trading_loop, args=(portfolio_manager, finnhub_client), daemon=True)
         bot_thread.start()
     else:
         print("WARNING: API keys not set. Bot loop will not start.")
-
-
-if __name__ == "__main__":
-    init_db()
-    # For local development only. Gunicorn will handle this in production.
+    
+    # This is for local development only. Gunicorn will handle this in production.
     # Use 'gunicorn app:app --bind 0.0.0.0:$PORT' as the start command on Render.
     port = int(os.environ.get('PORT', 8000))
     print(f"Flask app is running on http://0.0.0.0:{port}")
