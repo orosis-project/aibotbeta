@@ -1,5 +1,5 @@
 # app.py
-# Final Version: With auto-pause on API limit and daily resume.
+# Final Version: With dynamic trade sizing, auto-pause on API limit, and daily resume.
 
 import os
 import time
@@ -27,7 +27,8 @@ ADMIN_PASSWORD = "orosis"
 FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
 INITIAL_CASH = 5000.00
 DB_FILE = "trades.db"
-TRADE_AMOUNT_USD = 250
+# Base trade size is now a percentage of the initial cash
+BASE_TRADE_PERCENTAGE = 0.05
 LOOP_INTERVAL_SECONDS = 300
 STOCKS_TO_SCAN_PER_CYCLE = 15
 AI_LEARNING_TRADE_THRESHOLD = 5
@@ -189,10 +190,12 @@ class PortfolioManager:
             return
 
         stocks_to_buy = random.sample(sp500, min(INITIAL_BUY_COUNT, len(sp500)))
+        # Use a fixed trade amount for initial purchases for simplicity
+        initial_trade_amount = self.initial_cash * BASE_TRADE_PERCENTAGE
         for symbol in stocks_to_buy:
             price = self.api_client.get_quote(symbol)
-            if price and self.cash >= TRADE_AMOUNT_USD:
-                quantity = TRADE_AMOUNT_USD / price
+            if price and self.cash >= initial_trade_amount:
+                quantity = initial_trade_amount / price
                 self.buy_stock(symbol, quantity, price, "Initial portfolio seeding.", 0.5)
             else:
                 print(f"Skipping initial buy for {symbol}.")
@@ -309,9 +312,36 @@ def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, 
         if not ai_model_configured:
             return None
 
+    # The AI prompt is updated to ask for a trade size multiplier
     prompt = f"""
-    You are an expert stock trading analyst bot...
-    (Prompt logic is the same, omitted for brevity)
+    You are an expert stock trading analyst bot. Your goal is to analyze real-time market data, news, and a portfolio to make profitable trading decisions.
+
+    Here is the current information:
+    - **Current Time:** {datetime.now()}
+    - **Stock Symbol:** {symbol}
+    - **Current Price:** ${price:.2f}
+    - **Recent News for {symbol}:** {json.dumps(news, indent=2)}
+    - **Current Portfolio Status:** {json.dumps(portfolio, indent=2)}
+    - **Recent Trades by Bot:** {json.dumps(recent_trades, indent=2)}
+    - **General Market News:** {json.dumps(market_news[:5], indent=2)}
+    - **Total Trades Made:** {trade_count}
+
+    Analyze the provided data. Determine if a 'BUY', 'SELL', or 'HOLD' action is appropriate.
+    - **BUY:** Recommend a BUY if the stock is undervalued, has positive news, and shows strong potential for growth.
+    - **SELL:** Recommend a SELL if the stock is overvalued, has negative news, or the current holdings are at a significant profit or loss that you deem appropriate to close.
+    - **HOLD:** Recommend a HOLD if the data is inconclusive or the current position is stable.
+
+    Provide a confidence score for your decision from 0.0 (no confidence) to 1.0 (very high confidence).
+
+    Based on your confidence, also provide a `trade_size_multiplier` from 0.5 to 2.0. A multiplier of 1.0 corresponds to the base trade size. Use a higher multiplier for high-confidence trades and a lower multiplier for low-confidence trades.
+
+    Format your response as a JSON object with the following keys:
+    {{
+        "action": "BUY" or "SELL" or "HOLD",
+        "reasoning": "A concise explanation for your decision.",
+        "confidence": 0.0-1.0,
+        "trade_size_multiplier": 0.5-2.0
+    }}
     """
     
     try:
@@ -386,14 +416,24 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
                 action = ai_decision.get('action', '').upper()
                 reasoning = ai_decision.get('reasoning', '')
                 confidence = ai_decision.get('confidence', 0)
+                trade_size_multiplier = ai_decision.get('trade_size_multiplier', 1.0)
+                
+                # Calculate the dynamic trade amount
+                dynamic_trade_amount = (current_portfolio_status['total_portfolio_value'] * BASE_TRADE_PERCENTAGE) * trade_size_multiplier
+                dynamic_trade_amount = min(dynamic_trade_amount, current_portfolio_status['cash']) # Cap the amount at available cash
+                
+                print(f"Decision: {action} with confidence {confidence:.2f}. Dynamic Trade Amount: ${dynamic_trade_amount:.2f}")
 
                 if action == 'BUY':
-                    quantity = TRADE_AMOUNT_USD / price
-                    portfolio_manager.buy_stock(symbol, quantity, price, reasoning, confidence)
+                    if dynamic_trade_amount >= price:
+                        quantity = dynamic_trade_amount / price
+                        portfolio_manager.buy_stock(symbol, quantity, price, reasoning, confidence)
                 elif action == 'SELL':
                     if symbol in current_portfolio_status['owned_stocks']:
-                        quantity_to_sell = min(TRADE_AMOUNT_USD / price, current_portfolio_status['owned_stocks'][symbol]['quantity'])
-                        portfolio_manager.sell_stock(symbol, quantity_to_sell, price, reasoning, confidence)
+                        # Calculate quantity to sell based on the dynamic trade amount
+                        quantity_to_sell = min(dynamic_trade_amount / price, current_portfolio_status['owned_stocks'][symbol]['quantity'])
+                        if quantity_to_sell > 0:
+                            portfolio_manager.sell_stock(symbol, quantity_to_sell, price, reasoning, confidence)
             
             time.sleep(20)
 
