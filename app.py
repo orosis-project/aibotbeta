@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Corrected initialization logic for stable deployment.
+# Final Version: Corrected initialization logic to fix race condition.
 
 import os
 import time
@@ -364,7 +364,9 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
         print(f"--- Cycle finished. Waiting {LOOP_INTERVAL_SECONDS}s. ---")
         time.sleep(LOOP_INTERVAL_SECONDS)
 
-# --- Global Instances ---
+# --- Global Instances & App Initialization ---
+init_db()
+configure_ai()
 finnhub_client = FinnhubClient()
 portfolio_manager = PortfolioManager(INITIAL_CASH, finnhub_client, DB_FILE)
 
@@ -437,11 +439,7 @@ def ask_ai():
         return jsonify({"answer": error_message}), 500
 
 # --- Main Execution ---
-init_db()
-configure_ai()
-
 if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
-    # **FIXED**: The trading loop was missing from the user-provided file. It is now restored.
     bot_thread = Thread(target=bot_trading_loop, args=(portfolio_manager, finnhub_client), daemon=True)
     bot_thread.start()
 
