@@ -369,9 +369,16 @@ def get_ai_decision(symbol, price, news, portfolio, past_performance, market_new
     try:
         response = ai_model.generate_content(prompt)
         decision_text = response.text.strip().replace("```json", "").replace("```", "")
-        decision = json.loads(decision_text)
-        print(f"AI Decision for {symbol}: {decision}")
-        return decision
+        # The AI might not always return a perfect JSON object, so we wrap
+        # this in a try-except block to be safe.
+        try:
+            decision = json.loads(decision_text)
+            print(f"AI Decision for {symbol}: {decision}")
+            return jsonify(decision)
+        except json.JSONDecodeError:
+            # If the AI response is not valid JSON, we return a generic answer.
+            return jsonify({"answer": decision_text})
+
     except Exception as e:
         print(f"ERROR: Failed to get AI chat response: {e}")
         return jsonify({"answer": "I encountered an error."}), 500
@@ -382,8 +389,11 @@ def admin_pannel():
     return render_template("admin_pannel.html")
 
 # --- Main Execution ---
+# This block runs when Gunicorn starts the application.
 init_db()
 if GEMINI_API_KEY and FINNHUB_API_KEY:
+    # We start the trading loop in a single, daemonized thread.
+    # This prevents Gunicorn's multi-process model from starting the loop multiple times.
     bot_thread = Thread(target=bot_trading_loop, args=(portfolio_manager, finnhub_client), daemon=True)
     bot_thread.start()
 else:
