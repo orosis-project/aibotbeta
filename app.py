@@ -373,231 +373,6 @@ def get_ai_decision(symbol, price, news, portfolio, past_performance, market_new
         print(f"AI Decision for {symbol}: {decision}")
         return decision
     except Exception as e:
-        print(f"ERROR: Failed to get AI decision for {symbol}: {e}")
-        return None
-
-# --- Main Bot Loop ---
-def bot_trading_loop(portfolio_manager, finnhub_client):
-    global AI_LEARNING_ENABLED
-    
-    print("Bot trading loop started.")
-    
-    # Pre-calculate initial trades to determine when to enable AI
-    initial_trade_symbols = []
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT symbol FROM trades WHERE reasoning LIKE 'Forced buy to seed portfolio%'")
-        initial_trade_symbols = [row['symbol'] for row in cursor.fetchall()]
-        conn.close()
-    except Exception as e:
-        print(f"ERROR: Could not fetch initial trade symbols: {e}")
-        
-    while True:
-        with bot_status_lock:
-            is_running = bot_is_running
-        
-        if not is_running:
-            print("Bot is paused. Skipping trading cycle.")
-            time.sleep(30)
-            continue
-
-        print("\n--- Starting new trading cycle ---")
-        
-        trade_count = get_trade_count()
-        # Calculate new trades made since the initial seeding
-        new_trades_count = max(0, trade_count - INITIAL_BUY_COUNT)
-        
-        if new_trades_count >= AI_LEARNING_TRADE_THRESHOLD:
-            AI_LEARNING_ENABLED = True
-
-        if AI_LEARNING_ENABLED:
-            print(f"AI learning is ENABLED. Trade count: {trade_count}. Confidence threshold set to 70%.")
-            confidence_threshold = 0.70
-        else:
-            print(f"AI learning is DISABLED. New trades made: {new_trades_count}/{AI_LEARNING_TRADE_THRESHOLD}.")
-            confidence_threshold = 0.65  # A moderately high threshold for the pre-AI trades
-
-        sp500 = finnhub_client.get_sp500_constituents()
-        if not sp500:
-            print("Could not fetch S&P 500 list, waiting for next cycle.")
-            time.sleep(LOOP_INTERVAL_SECONDS)
-            continue
-        
-        discovered_stocks = random.sample(sp500, STOCKS_TO_SCAN_PER_CYCLE)
-        portfolio = portfolio_manager.get_portfolio_status()
-        owned_stocks = list(portfolio['owned_stocks'].keys())
-        market_news = finnhub_client.get_market_news()
-        stocks_to_analyze = list(set(discovered_stocks + owned_stocks))
-        print(f"This cycle, analyzing: {stocks_to_analyze}")
-        
-        all_trades = get_recent_trades(200) # Get a larger history
-        
-        # New: Detailed performance summary for AI prompt
-        total_profit_loss = sum(t['quantity'] * (portfolio['owned_stocks'].get(t['symbol'], {}).get('current_price', t['price']) - t['price']) for t in all_trades if t['action'] == 'BUY')
-        winning_trades = sum(1 for t in all_trades if t['action'] == 'SELL' and (t['price'] - portfolio['owned_stocks'].get(t['symbol'], {}).get('average_buy_price', t['price'])) > 0)
-        losing_trades = sum(1 for t in all_trades if t['action'] == 'SELL' and (t['price'] - portfolio['owned_stocks'].get(t['symbol'], {}).get('average_buy_price', t['price'])) < 0)
-        total_profit_from_winning_trades = sum(t['quantity'] * (t['price'] - portfolio['owned_stocks'].get(t['symbol'], {}).get('average_buy_price', t['price'])) for t in all_trades if t['action'] == 'SELL' and (t['price'] - portfolio['owned_stocks'].get(t['symbol'], {}).get('average_buy_price', t['price'])) > 0)
-        
-        past_performance = {
-            "recent_trades": get_recent_trades(5),
-            "total_trades": len(all_trades),
-            "total_profit_loss": total_profit_loss,
-            "winning_trades": winning_trades,
-            "losing_trades": losing_trades,
-            "total_profit_from_winning_trades": total_profit_from_winning_trades,
-            "new_trades_count": new_trades_count
-        }
-
-        for symbol in stocks_to_analyze:
-            with bot_status_lock:
-                if not bot_is_running:
-                    print("Bot paused mid-cycle. Aborting current cycle.")
-                    break
-            
-            print(f"Analyzing {symbol}...")
-            price = finnhub_client.get_quote(symbol)
-            if not price: continue
-
-            candles = finnhub_client.get_stock_candles(symbol)
-            sma = calculate_sma(candles)
-            if not sma:
-                print(f"Could not calculate SMA for {symbol}, skipping analysis.")
-                continue
-            
-            news = finnhub_client.get_company_news(symbol)
-            current_portfolio_status = portfolio_manager.get_portfolio_status()
-
-            if not AI_LEARNING_ENABLED and symbol in initial_trade_symbols and price > current_portfolio_status['owned_stocks'][symbol]['average_buy_price'] * 1.05:
-                # Rule-based decision: sell a portion of an initial stock if it's 5% up
-                quantity_to_sell = current_portfolio_status['owned_stocks'][symbol]['quantity'] * 0.5
-                portfolio_manager.sell_stock(symbol, quantity_to_sell, price, "Rule-based sell: price is > 5% of initial buy price.", 0.99)
-            elif AI_LEARNING_ENABLED:
-                # AI is enabled, proceed with normal decision making
-                ai_decision = get_ai_decision(symbol, price, news, current_portfolio_status, past_performance, market_news, sma)
-
-                if ai_decision and ai_decision.get('confidence', 0) > confidence_threshold:
-                    action = ai_decision.get('action', '').upper()
-                    reasoning = ai_decision.get('reasoning', '')
-                    confidence = ai_decision.get('confidence', 0)
-
-                    if action == 'BUY':
-                        trade_size_multiplier = 1.0
-                        if confidence >= MIN_CONFIDENCE_FOR_RISKY_TRADE:
-                            trade_size_multiplier = CONFIDENCE_MULTIPLIER
-                            print(f"AI confidence is high ({confidence}), increasing trade size by {trade_size_multiplier}x.")
-                        
-                        trade_amount = TRADE_AMOUNT_USD * trade_size_multiplier
-                        quantity = trade_amount / price
-                        portfolio_manager.buy_stock(symbol, quantity, price, reasoning, confidence)
-                    elif action == 'SELL':
-                        if symbol in current_portfolio_status['owned_stocks']:
-                            quantity_to_sell = min(TRADE_AMOUNT_USD / price, current_portfolio_status['owned_stocks'][symbol]['quantity'])
-                            portfolio_manager.sell_stock(symbol, quantity_to_sell, price, reasoning, confidence)
-            
-            time.sleep(20)
-
-        print(f"--- Cycle finished. Waiting {LOOP_INTERVAL_SECONDS}s. ---")
-        time.sleep(LOOP_INTERVAL_SECONDS)
-
-# --- Global Instances ---
-finnhub_client = FinnhubClient(FINNHUB_API_KEY)
-portfolio_manager = PortfolioManager(INITIAL_CASH, finnhub_client, DB_FILE)
-
-# --- API Endpoints ---
-@app.route("/")
-def index(): return "<h1>AI Stock Bot Backend is Running</h1>"
-
-@app.route("/api/portfolio/summary", methods=['GET'])
-def get_portfolio_summary():
-    """A new endpoint to get a detailed performance summary for the admin panel."""
-    portfolio = portfolio_manager.get_portfolio_status()
-    all_trades = get_recent_trades(200) # Get a larger history
-    
-    total_profit_loss = sum(t['quantity'] * (portfolio['owned_stocks'].get(t['symbol'], {}).get('current_price', t['price']) - t['price']) for t in all_trades if t['action'] == 'BUY')
-    
-    winning_trades = sum(1 for t in all_trades if t['action'] == 'SELL' and (t['price'] - portfolio['owned_stocks'].get(t['symbol'], {}).get('average_buy_price', t['price'])) > 0)
-    losing_trades = sum(1 for t in all_trades if t['action'] == 'SELL' and (t['price'] - portfolio['owned_stocks'].get(t['symbol'], {}).get('average_buy_price', t['price'])) < 0)
-    
-    new_trades_count = max(0, len(all_trades) - INITIAL_BUY_COUNT)
-    
-    summary = {
-        "portfolio": portfolio,
-        "recent_trades": get_recent_trades(20),
-        "total_trades": len(all_trades),
-        "total_profit_loss": total_profit_loss,
-        "winning_trades": winning_trades,
-        "losing_trades": losing_trades,
-        "ai_learning_enabled": AI_LEARNING_ENABLED,
-        "new_trades_count": new_trades_count,
-        "ai_learning_threshold": AI_LEARNING_TRADE_THRESHOLD
-    }
-    
-    return jsonify(summary)
-
-@app.route("/api/portfolio", methods=['GET'])
-def get_portfolio(): return jsonify(portfolio_manager.get_portfolio_status())
-@app.route("/api/trades", methods=['GET'])
-def get_trades(): return jsonify(get_recent_trades())
-@app.route("/api/portfolio/reset", methods=['POST'])
-def reset_portfolio():
-    portfolio_manager.reset()
-    return jsonify({"message": "Portfolio reset successfully."})
-
-@app.route("/api/bot/start", methods=['POST'])
-def start_bot():
-    global bot_is_running
-    with bot_status_lock:
-        bot_is_running = True
-    print("Received command: START BOT")
-    return jsonify({"status": "running"})
-
-@app.route("/api/bot/pause", methods=['POST'])
-def pause_bot():
-    global bot_is_running
-    with bot_status_lock:
-        bot_is_running = False
-    print("Received command: PAUSE BOT")
-    return jsonify({"status": "paused"})
-
-@app.route("/api/bot/status", methods=['GET'])
-def get_bot_status():
-    with bot_status_lock:
-        status = "running" if bot_is_running else "paused"
-    return jsonify({"status": status})
-
-@app.route("/api/ask", methods=['POST'])
-def ask_ai():
-    question = request.json.get('question')
-    if not question:
-        return jsonify({"answer": "No question was asked."}), 400
-    if not ai_model:
-        return jsonify({"answer": "AI is currently unavailable. Please check the API key."}), 503
-    
-    portfolio = portfolio_manager.get_portfolio_status()
-    trades = get_recent_trades(5)
-    market_news = finnhub_client.get_market_news()
-    market_headlines = [f"- {item['headline']}" for item in market_news[:5]] if market_news else ["No general market news."]
-
-    prompt = f"""
-    You are an expert stock trading analyst bot. An administrator is asking you a question.
-    Based on your current status and recent history, provide a helpful and concise answer.
-    **Current Portfolio Status:**
-    {json.dumps(portfolio, indent=2)}
-    **Your 5 Most Recent Trades (Your Memory):**
-    {json.dumps(trades, indent=2)}
-    **General Market News (Overall Sentiment):**
-    {chr(10).join(market_headlines)}
-    **Administrator's Question:** "{question}"
-    **Your Answer:**
-    """
-    try:
-        response = ai_model.generate_content(prompt)
-        decision_text = response.text.strip().replace("```json", "").replace("```", "")
-        decision = json.loads(decision_text)
-        print(f"AI Decision for {symbol}: {decision}")
-        return decision
-    except Exception as e:
         print(f"ERROR: Failed to get AI chat response: {e}")
         return jsonify({"answer": "I encountered an error."}), 500
 
@@ -606,18 +381,24 @@ def ask_ai():
 def admin_pannel():
     return render_template("admin_pannel.html")
 
-# --- Main Execution ---
-# The decorator @app.before_first_request is not safe for Gunicorn's forking model.
-# The bot loop should be started once in the main process.
-if __name__ == "__main__":
-    init_db()
+
+@app.before_first_request
+def start_bot_thread():
+    """Starts the bot thread before the first request is served."""
+    # This is a good solution for a single-threaded server.
+    # In a multi-process Gunicorn environment, this will run for each worker.
+    # This is an acceptable trade-off for simplicity in a non-critical context.
     if GEMINI_API_KEY and FINNHUB_API_KEY:
         bot_thread = Thread(target=bot_trading_loop, args=(portfolio_manager, finnhub_client), daemon=True)
         bot_thread.start()
     else:
         print("WARNING: API keys not set. Bot loop will not start.")
-    
-    # This is for local development only. Render will use the 'start' command.
+
+
+if __name__ == "__main__":
+    init_db()
+    # For local development only. Gunicorn will handle this in production.
+    # Use 'gunicorn app:app --bind 0.0.0.0:$PORT' as the start command on Render.
     port = int(os.environ.get('PORT', 8000))
     print(f"Flask app is running on http://0.0.0.0:{port}")
     app.run(host='0.0.0.0', port=port, threaded=True, debug=False)
