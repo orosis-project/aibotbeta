@@ -1,5 +1,5 @@
 # app.py
-# Final Version: With corrected web page routes for /view and /admin.
+# Final Version: With /view and password-protected /admin routes
 
 import os
 import time
@@ -16,7 +16,7 @@ import random
 # --- Configuration ---
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY")
-ADMIN_PASSWORD = "orosis"
+ADMIN_PASSWORD = "orosis" # The password for the admin panel
 
 FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
 INITIAL_CASH = 5000.00
@@ -101,7 +101,7 @@ def get_recent_trades(limit=50):
 
 # --- Flask App ---
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": "*"}}) # Enable CORS for API routes
+CORS(app) # Enable CORS for API routes
 
 # --- Portfolio Manager ---
 class PortfolioManager:
