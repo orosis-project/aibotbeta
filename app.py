@@ -53,14 +53,12 @@ def configure_ai():
         if ai_model_configured:
             return
         
-        # Ensure there is at least one API key available
         if not GEMINI_API_KEYS or all(key is None for key in GEMINI_API_KEYS):
             print("ERROR: No Gemini API keys found in environment variables. Bot will not run.")
             all_keys_exhausted = True
             bot_is_running = False
             return
             
-        # Find the first available API key
         available_key_found = False
         start_index = current_api_key_index
         while not available_key_found:
@@ -77,13 +75,11 @@ def configure_ai():
                     ai_model_configured = False
                     current_api_key_index = (current_api_key_index + 1) % len(GEMINI_API_KEYS)
                     if current_api_key_index == start_index:
-                        # We've looped through all keys and none worked
                         print("All API keys failed to configure. Pausing bot.")
                         all_keys_exhausted = True
                         bot_is_running = False
                         break
             else:
-                # Key is None, try the next one
                 current_api_key_index = (current_api_key_index + 1) % len(GEMINI_API_KEYS)
                 if current_api_key_index == start_index:
                     print("No valid Gemini API keys found. Pausing bot.")
@@ -158,7 +154,6 @@ class PortfolioManager:
         self.cash = initial_cash
         self.stocks = {}
         self.initial_value = initial_cash
-        # Reconstruct portfolio on init, but not on every dashboard refresh
         self._reconstruct_portfolio_from_db()
         print("Portfolio Manager initialized.")
         if not get_all_trades():
@@ -221,7 +216,6 @@ class PortfolioManager:
                 print(f"Skipping initial buy for {symbol}.")
             time.sleep(1.5)
         print("Initial buy-in complete.")
-        # After initial buy, re-reconstruct to update the state.
         self._reconstruct_portfolio_from_db()
 
 
@@ -241,8 +235,9 @@ class PortfolioManager:
                 }
             total_value = self.cash + stock_values
             profit_loss = total_value - self.initial_value
+            # The fixed line is here:
             return {
-                "cash": self": {self.cash}, "owned_stocks": detailed_stocks,
+                "cash": self.cash, "owned_stocks": detailed_stocks,
                 "total_portfolio_value": total_value, "profit_loss": profit_loss
             }
 
@@ -337,7 +332,6 @@ def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, 
         if not ai_model_configured:
             return None
 
-    # The AI prompt is updated to ask for a trade size multiplier
     prompt = f"""
     You are an expert stock trading analyst bot. Your goal is to analyze real-time market data, news, and a portfolio to make profitable trading decisions.
 
@@ -379,12 +373,10 @@ def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, 
         print(f"CRITICAL ERROR: Gemini API key {current_api_key_index} limit reached.")
         
         with bot_status_lock:
-            # Move to the next API key
             current_api_key_index = (current_api_key_index + 1) % len(GEMINI_API_KEYS)
-            ai_model_configured = False # Force reconfiguration with the new key
+            ai_model_configured = False
             
             if current_api_key_index == 0:
-                # We've wrapped around, all keys are exhausted
                 print("All Gemini API keys are exhausted. Auto-pausing bot until tomorrow.")
                 bot_is_running = False
                 all_keys_exhausted = True
@@ -416,6 +408,7 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
         print(f"Current trade count: {trade_count}. Confidence threshold set to {confidence_threshold * 100}%.")
 
         sp500 = finnhub_client.get_sp500_constituents()
+        # FIX: The bot loop also needs the latest portfolio data
         portfolio = portfolio_manager.get_portfolio_status()
         owned_stocks = list(portfolio['owned_stocks'].keys())
         market_news = finnhub_client.get_market_news()
