@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Stock Bot Admin Panel</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #1a202c; /* Dark background */
+            color: #e2e8f0; /* Light text */
+        }
+        .container {
+            max-width: 1280px;
+        }
+        .section-card {
+            background-color: #2d3748;
+            border: 1px solid #4a5568;
+        }
+        .ai-message {
+            background-color: #4a5568;
+        }
+        .admin-message {
+            background-color: #2d3748;
+        }
+        .scrollable-content {
+            height: 300px;
+            overflow-y: auto;
+        }
+        .green-dot {
+            background-color: #48bb78; /* Green */
+        }
+        .red-dot {
+            background-color: #f56565; /* Red */
+        }
+        .orange-dot {
+            background-color: #ed8936; /* Orange */
+        }
+        .error-message {
+            background-color: #c53030;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100">
+
+    <div class="container mx-auto px-4 py-8">
+        <header class="text-center mb-10">
+            <h1 class="text-4xl md:text-5xl font-bold text-teal-400">AI Stock Bot Admin Panel</h1>
+            <p class="mt-2 text-lg text-gray-400">Monitor and control your automated trading bot.</p>
+        </header>
+
+        <!-- Bot Controls & Status -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div class="section-card rounded-xl shadow-lg p-6 flex flex-col justify-between">
+                <h2 class="text-xl font-semibold mb-4 text-teal-300">Bot Status</h2>
+                <div class="flex items-center space-x-4">
+                    <span id="status-dot" class="inline-block h-4 w-4 rounded-full"></span>
+                    <span id="bot-status" class="text-lg font-medium">Loading...</span>
+                </div>
+            </div>
+
+            <div class="section-card rounded-xl shadow-lg p-6 flex flex-col justify-between">
+                <h2 class="text-xl font-semibold mb-4 text-teal-300">Next Cycle In</h2>
+                <div class="text-center">
+                    <span id="countdown-timer" class="text-2xl font-bold text-white">05:00</span>
+                </div>
+            </div>
+            
+            <div class="section-card rounded-xl shadow-lg p-6 flex items-center justify-center space-x-4">
+                <button id="start-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg transition duration-300 shadow-md">Start Bot</button>
+                <button id="pause-btn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-lg transition duration-300 shadow-md">Pause Bot</button>
+            </div>
+
+            <div class="section-card rounded-xl shadow-lg p-6 flex items-center justify-center">
+                <button id="reset-btn" class="bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-6 rounded-lg transition duration-300 shadow-md">Reset Portfolio</button>
+            </div>
+        </div>
+        
+        <hr class="border-gray-700 mb-8">
+
+        <!-- Portfolio Summary -->
+        <div class="section-card rounded-xl shadow-lg p-6 mb-8">
+            <h2 class="text-2xl font-semibold mb-4 text-teal-300">Portfolio Summary</h2>
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 text-center">
+                <div class="bg-gray-800 p-4 rounded-lg shadow-inner">
+                    <p class="text-sm text-gray-400">Cash Balance</p>
+                    <p id="cash-balance" class="text-2xl font-bold mt-1 text-yellow-300">$0.00</p>
+                </div>
+                <div class="bg-gray-800 p-4 rounded-lg shadow-inner">
+                    <p class="text-sm text-gray-400">Total Value</p>
+                    <p id="total-value" class="text-2xl font-bold mt-1 text-blue-300">$0.00</p>
+                </div>
+                <div class="bg-gray-800 p-4 rounded-lg shadow-inner">
+                    <p class="text-sm text-gray-400">Profit / Loss</p>
+                    <p id="profit-loss" class="text-2xl font-bold mt-1 text-green-400">$0.00</p>
+                </div>
+            </div>
+        </div>
+
+        <hr class="border-gray-700 mb-8">
+
+        <!-- AI Learning Status -->
+        <div class="section-card rounded-xl shadow-lg p-6 mb-8">
+            <h2 class="text-2xl font-semibold mb-4 text-teal-300">AI Learning Status</h2>
+            <div class="flex flex-col md:flex-row md:items-center space-y-2 md:space-y-0 md:space-x-4">
+                <div class="flex-grow">
+                    <p class="text-lg font-medium" id="learning-status-text">Loading...</p>
+                </div>
+                <div class="w-full md:w-1/2 bg-gray-700 rounded-full h-2.5">
+                    <div id="learning-progress" class="bg-cyan-400 h-2.5 rounded-full transition-all duration-500 ease-in-out" style="width: 0%;"></div>
+                </div>
+            </div>
+        </div>
+
+        <hr class="border-gray-700 mb-8">
+
+        <!-- Owned Stocks & Recent Trades -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+            <!-- Owned Stocks -->
+            <div class="section-card rounded-xl shadow-lg p-6">
+                <h2 class="text-2xl font-semibold mb-4 text-teal-300">Owned Stocks</h2>
+                <div class="scrollable-content">
+                    <table class="min-w-full text-sm">
+                        <thead>
+                            <tr class="text-gray-400 border-b border-gray-700">
+                                <th class="py-2 text-left">Symbol</th>
+                                <th class="py-2 text-left">Quantity</th>
+                                <th class="py-2 text-left">Avg. Price</th>
+                                <th class="py-2 text-left">Current Value</th>
+                            </tr>
+                        </thead>
+                        <tbody id="owned-stocks-body">
+                            <tr><td colspan="4" class="text-center py-4 text-gray-500">Loading stocks...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <!-- Recent Trades -->
+            <div class="section-card rounded-xl shadow-lg p-6">
+                <h2 class="text-2xl font-semibold mb-4 text-teal-300">Recent Trades</h2>
+                <div class="scrollable-content">
+                    <table class="min-w-full text-sm">
+                        <thead>
+                            <tr class="text-gray-400 border-b border-gray-700">
+                                <th class="py-2 text-left">Timestamp</th>
+                                <th class="py-2 text-left">Symbol</th>
+                                <th class="py-2 text-left">Action</th>
+                                <th class="py-2 text-left">Quantity</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recent-trades-body">
+                            <tr><td colspan="4" class="text-center py-4 text-gray-500">Loading trades...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <hr class="border-gray-700 mb-8">
+        
+        <!-- AI Chat Interface -->
+        <div class="section-card rounded-xl shadow-lg p-6">
+            <h2 class="text-2xl font-semibold mb-4 text-teal-300">Ask the Bot</h2>
+            <div id="chat-history" class="bg-gray-800 rounded-lg p-4 scrollable-content flex flex-col space-y-4 mb-4">
+                <div class="ai-message rounded-lg p-3 self-start max-w-lg">
+                    <p>Hello, I'm ready to answer your questions about the market and my portfolio.</p>
+                </div>
+            </div>
+            <form id="ai-chat-form" class="flex space-x-2">
+                <input type="text" id="ai-chat-input" placeholder="Type your question here..." class="flex-grow p-3 rounded-lg bg-gray-800 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-teal-400">
+                <button type="submit" class="bg-teal-600 hover:bg-teal-700 text-white font-bold py-3 px-6 rounded-lg transition duration-300 shadow-md">Ask</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE_URL = '/api';
+        
+        const botStatusElem = document.getElementById('bot-status');
+        const statusDotElem = document.getElementById('status-dot');
+        const cashBalanceElem = document.getElementById('cash-balance');
+        const totalValueElem = document.getElementById('total-value');
+        const profitLossElem = document.getElementById('profit-loss');
+        const ownedStocksBodyElem = document.getElementById('owned-stocks-body');
+        const recentTradesBodyElem = document.getElementById('recent-trades-body');
+        const startBtn = document.getElementById('start-btn');
+        const pauseBtn = document.getElementById('pause-btn');
+        const resetBtn = document.getElementById('reset-btn');
+        const chatForm = document.getElementById('ai-chat-form');
+        const chatInput = document.getElementById('ai-chat-input');
+        const chatHistory = document.getElementById('chat-history');
+        const learningStatusText = document.getElementById('learning-status-text');
+        const learningProgress = document.getElementById('learning-progress');
+        const countdownTimerElem = document.getElementById('countdown-timer');
+
+        const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
+        const formatDate = (dateString) => new Date(dateString).toLocaleString();
+
+        const fetchData = async () => {
+            try {
+                const [statusRes, portfolioRes, tradesRes] = await Promise.all([
+                    fetch(`${API_BASE_URL}/bot/status`),
+                    fetch(`${API_BASE_URL}/portfolio`),
+                    fetch(`${API_BASE_URL}/trades`)
+                ]);
+
+                if (!statusRes.ok || !portfolioRes.ok || !tradesRes.ok) {
+                    throw new Error('One or more API endpoints failed.');
+                }
+
+                const statusData = await statusRes.json();
+                const portfolioData = await portfolioRes.json();
+                const tradesData = await tradesRes.json();
+
+                botStatusElem.textContent = statusData.status === 'running' ? 'Running' : 'Paused';
+                statusDotElem.className = `inline-block h-4 w-4 rounded-full ${statusData.status === 'running' ? 'green-dot' : 'red-dot'}`;
+
+                cashBalanceElem.textContent = formatCurrency(portfolioData.cash);
+                totalValueElem.textContent = formatCurrency(portfolioData.total_portfolio_value);
+                profitLossElem.textContent = formatCurrency(portfolioData.profit_loss);
+                profitLossElem.style.color = portfolioData.profit_loss >= 0 ? '#48bb78' : '#f56565';
+
+                ownedStocksBodyElem.innerHTML = '';
+                const ownedStocks = portfolioData.owned_stocks;
+                if (Object.keys(ownedStocks).length === 0) {
+                    ownedStocksBodyElem.innerHTML = `<tr><td colspan="4" class="text-center py-4 text-gray-500">No stocks owned yet.</td></tr>`;
+                } else {
+                    for (const symbol in ownedStocks) {
+                        const stock = ownedStocks[symbol];
+                        ownedStocksBodyElem.innerHTML += `
+                            <tr>
+                                <td class="py-2 font-medium">${symbol}</td>
+                                <td class="py-2">${stock.quantity.toFixed(4)}</td>
+                                <td class="py-2">${formatCurrency(stock.average_buy_price)}</td>
+                                <td class="py-2">${formatCurrency(stock.current_value)}</td>
+                            </tr>`;
+                    }
+                }
+
+                const AI_LEARNING_THRESHOLD = 5;
+                const INITIAL_BUY_COUNT = 10;
+                const newTradesCount = Math.max(0, tradesData.length - INITIAL_BUY_COUNT);
+                const isLearning = newTradesCount >= AI_LEARNING_THRESHOLD;
+                const progress = Math.min(100, (newTradesCount / AI_LEARNING_THRESHOLD) * 100);
+
+                learningProgress.style.width = `${progress}%`;
+                if (isLearning) {
+                    learningStatusText.textContent = `AI Learning is ENABLED. The bot is actively making strategic trades.`;
+                    learningProgress.className = `bg-cyan-400 h-2.5 rounded-full transition-all duration-500 ease-in-out`;
+                } else {
+                    learningStatusText.textContent = `Initial trades made: ${newTradesCount}/${AI_LEARNING_THRESHOLD}. The bot is in a learning phase.`;
+                    learningProgress.className = `bg-yellow-400 h-2.5 rounded-full transition-all duration-500 ease-in-out`;
+                }
+                
+                recentTradesBodyElem.innerHTML = '';
+                if (tradesData.length === 0) {
+                    recentTradesBodyElem.innerHTML = `<tr><td colspan="4" class="text-center py-4 text-gray-500">No trades made yet.</td></tr>`;
+                } else {
+                    tradesData.forEach(trade => {
+                        const actionColor = trade.action === 'BUY' ? 'text-green-400' : 'text-red-400';
+                        recentTradesBodyElem.innerHTML += `
+                            <tr>
+                                <td class="py-2 text-gray-400">${formatDate(trade.timestamp)}</td>
+                                <td class="py-2 font-medium">${trade.symbol}</td>
+                                <td class="py-2"><span class="${actionColor} font-bold">${trade.action}</span></td>
+                                <td class="py-2">${trade.quantity.toFixed(4)}</td>
+                            </tr>`;
+                    });
+                }
+
+            } catch (error) {
+                console.error('Error fetching data:', error);
+                botStatusElem.textContent = 'Error';
+                statusDotElem.className = 'inline-block h-4 w-4 rounded-full red-dot';
+            }
+        };
+
+        const controlBot = async (action) => {
+            try {
+                const res = await fetch(`${API_BASE_URL}/bot/${action}`, { method: 'POST' });
+                if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+                await fetchData();
+            } catch (error) { console.error(`Error controlling bot:`, error); }
+        };
+
+        const resetPortfolio = async () => {
+            if (!confirm("Are you sure you want to reset the entire portfolio? This will delete all trade history and reset cash.")) return;
+            try {
+                const res = await fetch(`${API_BASE_URL}/portfolio/reset`, { method: 'POST' });
+                if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+                await fetchData();
+            } catch (error) { console.error('Error resetting portfolio:', error); }
+        };
+
+        const askAI = async (question) => {
+            const userMessageDiv = document.createElement('div');
+            userMessageDiv.className = 'admin-message rounded-lg p-3 self-end max-w-lg';
+            userMessageDiv.textContent = question;
+            chatHistory.appendChild(userMessageDiv);
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+
+            const loadingDiv = document.createElement('div');
+            loadingDiv.id = 'loading-message';
+            loadingDiv.className = 'ai-message rounded-lg p-3 self-start max-w-lg';
+            loadingDiv.textContent = 'Thinking...';
+            chatHistory.appendChild(loadingDiv);
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+
+            try {
+                const res = await fetch(`${API_BASE_URL}/ask`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question: question })
+                });
+                if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+                const data = await res.json();
+                loadingDiv.textContent = data.answer;
+            } catch (error) {
+                console.error('Error asking AI:', error);
+                loadingDiv.textContent = 'Error: Could not get a response from the AI.';
+                loadingDiv.classList.add('error-message');
+            }
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+        };
+
+        const startCountdown = () => {
+            const CYCLE_DURATION = 300; // 5 minutes in seconds
+            let countdown = CYCLE_DURATION;
+
+            setInterval(() => {
+                countdown--;
+                if (countdown < 0) {
+                    countdown = CYCLE_DURATION;
+                }
+                const minutes = Math.floor(countdown / 60).toString().padStart(2, '0');
+                const seconds = (countdown % 60).toString().padStart(2, '0');
+                countdownTimerElem.textContent = `${minutes}:${seconds}`;
+            }, 1000);
+        };
+        
+        startBtn.addEventListener('click', () => controlBot('start'));
+        pauseBtn.addEventListener('click', () => controlBot('pause'));
+        resetBtn.addEventListener('click', () => resetPortfolio());
+        chatForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const question = chatInput.value.trim();
+            if (question) {
+                askAI(question);
+                chatInput.value = '';
+            }
+        });
+
+        window.onload = () => {
+            fetchData();
+            setInterval(fetchData, 2000);
+            startCountdown();
+        };
+    </script>
+</body>
+</html>
