@@ -158,9 +158,9 @@ class PortfolioManager:
         self.cash = initial_cash
         self.stocks = {}
         self.initial_value = initial_cash
+        # Reconstruct portfolio on init, but not on every dashboard refresh
         self._reconstruct_portfolio_from_db()
-        print("Portfolio Manager initialized and reconstructed.")
-        # Check if initial stocks need to be purchased
+        print("Portfolio Manager initialized.")
         if not get_all_trades():
             print("No trades found. Initiating initial stock purchase.")
             Thread(target=self.buy_initial_stocks).start()
@@ -211,7 +211,6 @@ class PortfolioManager:
             return
 
         stocks_to_buy = random.sample(sp500, min(INITIAL_BUY_COUNT, len(sp500)))
-        # Use a fixed trade amount for initial purchases for simplicity
         initial_trade_amount = self.initial_cash * BASE_TRADE_PERCENTAGE
         for symbol in stocks_to_buy:
             price = self.api_client.get_quote(symbol)
@@ -222,8 +221,13 @@ class PortfolioManager:
                 print(f"Skipping initial buy for {symbol}.")
             time.sleep(1.5)
         print("Initial buy-in complete.")
+        # After initial buy, re-reconstruct to update the state.
+        self._reconstruct_portfolio_from_db()
+
 
     def get_portfolio_status(self):
+        # FIX: Reconstruct the portfolio from the database for the most up-to-date information
+        self._reconstruct_portfolio_from_db()
         with self._lock:
             stock_values = 0.0
             detailed_stocks = {}
@@ -238,7 +242,7 @@ class PortfolioManager:
             total_value = self.cash + stock_values
             profit_loss = total_value - self.initial_value
             return {
-                "cash": self.cash, "owned_stocks": detailed_stocks,
+                "cash": self": {self.cash}, "owned_stocks": detailed_stocks,
                 "total_portfolio_value": total_value, "profit_loss": profit_loss
             }
 
@@ -439,9 +443,8 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
                 confidence = ai_decision.get('confidence', 0)
                 trade_size_multiplier = ai_decision.get('trade_size_multiplier', 1.0)
                 
-                # Calculate the dynamic trade amount
                 dynamic_trade_amount = (current_portfolio_status['total_portfolio_value'] * BASE_TRADE_PERCENTAGE) * trade_size_multiplier
-                dynamic_trade_amount = min(dynamic_trade_amount, current_portfolio_status['cash']) # Cap the amount at available cash
+                dynamic_trade_amount = min(dynamic_trade_amount, current_portfolio_status['cash'])
                 
                 print(f"Decision: {action} with confidence {confidence:.2f}. Dynamic Trade Amount: ${dynamic_trade_amount:.2f}")
 
@@ -451,7 +454,6 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
                         portfolio_manager.buy_stock(symbol, quantity, price, reasoning, confidence)
                 elif action == 'SELL':
                     if symbol in current_portfolio_status['owned_stocks']:
-                        # Calculate quantity to sell based on the dynamic trade amount
                         quantity_to_sell = min(dynamic_trade_amount / price, current_portfolio_status['owned_stocks'][symbol]['quantity'])
                         if quantity_to_sell > 0:
                             portfolio_manager.sell_stock(symbol, quantity_to_sell, price, reasoning, confidence)
@@ -468,7 +470,6 @@ def scheduler_loop():
     while True:
         now_utc = datetime.now(timezone.utc)
         tomorrow_utc = now_utc + timedelta(days=1)
-        # Set resume time for 1 minute past midnight UTC
         midnight_utc = tomorrow_utc.replace(hour=0, minute=1, second=0, microsecond=0)
         sleep_seconds = (midnight_utc - now_utc).total_seconds()
         
@@ -480,12 +481,9 @@ def scheduler_loop():
                 print("Scheduler: API quotas have reset. Resuming bot.")
                 bot_is_running = True
                 all_keys_exhausted = False
-                current_api_key_index = 0 # Reset to the first key
-
+                current_api_key_index = 0
 
 # --- Global Instances & App Initialization ---
-# The check for the initial purchase has been moved to the PortfolioManager's __init__ method
-# to ensure it happens reliably on first start.
 init_db()
 configure_ai()
 finnhub_client = FinnhubClient()
@@ -496,11 +494,9 @@ portfolio_manager = PortfolioManager(INITIAL_CASH, finnhub_client, DB_FILE)
 def index():
     return "<h1>AI Stock Bot Backend is Running</h1>"
 
-
 @app.route("/view")
 def view_dashboard():
     return render_template("view.html")
-
 
 @app.route("/admin", methods=['GET', 'POST'])
 def admin_dashboard():
@@ -511,22 +507,18 @@ def admin_dashboard():
             return render_template("login.html", error="Invalid password")
     return render_template("login.html")
 
-
 @app.route("/api/portfolio", methods=['GET'])
 def get_portfolio():
     return jsonify(portfolio_manager.get_portfolio_status())
-
 
 @app.route("/api/trades", methods=['GET'])
 def get_trades():
     return jsonify(get_recent_trades())
 
-
 @app.route("/api/portfolio/reset", methods=['POST'])
 def reset_portfolio():
     result = portfolio_manager.reset()
     return jsonify(result)
-
 
 @app.route("/api/bot/start", methods=['POST'])
 def start_bot():
@@ -537,14 +529,12 @@ def start_bot():
         bot_is_running = True
         return jsonify({"status": "running"})
 
-
 @app.route("/api/bot/pause", methods=['POST'])
 def pause_bot():
     global bot_is_running
     with bot_status_lock:
         bot_is_running = False
     return jsonify({"status": "paused"})
-
 
 @app.route("/api/bot/status", methods=['GET'])
 def get_bot_status():
@@ -554,18 +544,13 @@ def get_bot_status():
             status = "paused_apikey"
     return jsonify({"status": status})
 
-
 @app.route("/api/ask", methods=['POST'])
 def ask_ai():
     # (This function's logic remains the same)
     pass
 
-
 # --- Main Execution ---
 if __name__ == "__main__":
-    # The check `if not app.debug...` is removed and `use_reloader=False` is added
-    # to ensure background threads are not duplicated, which is a common issue with
-    # Flask's built-in reloader.
     bot_thread = Thread(target=bot_trading_loop, args=(portfolio_manager, finnhub_client), daemon=True)
     bot_thread.start()
     scheduler_thread = Thread(target=scheduler_loop, daemon=True)
