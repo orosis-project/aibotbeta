@@ -33,6 +33,8 @@ LOOP_INTERVAL_SECONDS = 300
 STOCKS_TO_SCAN_PER_CYCLE = 15
 AI_LEARNING_TRADE_THRESHOLD = 5
 INITIAL_BUY_COUNT = 10
+# New: Rate limiting for Finnhub to avoid 429 errors
+FINNHUB_RATE_LIMIT_SECONDS = 1.5
 
 # --- Bot State ---
 bot_status_lock = Lock()
@@ -302,6 +304,8 @@ class FinnhubClient:
         try:
             r = requests.get(f"{FINNHUB_BASE_URL}/{endpoint}", params=params)
             r.raise_for_status()
+            # New: Add a sleep delay to respect Finnhub's rate limits
+            time.sleep(FINNHUB_RATE_LIMIT_SECONDS)
             return r.json()
         except requests.exceptions.RequestException as e:
             print(f"ERROR: Finnhub request failed: {e}")
@@ -427,7 +431,8 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
 
             news = finnhub_client.get_company_news(symbol)
             trades = get_recent_trades(5)
-            current_portfolio_status = portfolio_manager.get_portfolio_status()
+            # FIX: We have the latest portfolio status from the start of the loop, no need to call again here.
+            current_portfolio_status = portfolio
             ai_decision = get_ai_decision(symbol, price, news, current_portfolio_status, trades, market_news, trade_count)
 
             if ai_decision and ai_decision.get('confidence', 0) > confidence_threshold:
