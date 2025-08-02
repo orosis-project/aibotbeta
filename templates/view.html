@@ -21,7 +21,6 @@
             <p class="mt-2 text-lg text-gray-400">Live, read-only view of the bot's portfolio.</p>
         </header>
 
-        <!-- Portfolio Summary -->
         <div class="section-card rounded-xl shadow-lg p-6 mb-8">
             <h2 class="text-2xl font-semibold mb-4 text-teal-300">Portfolio Summary</h2>
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 text-center">
@@ -40,9 +39,7 @@
             </div>
         </div>
 
-        <!-- Owned Stocks & Recent Trades -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-            <!-- Owned Stocks -->
             <div class="section-card rounded-xl shadow-lg p-6">
                 <h2 class="text-2xl font-semibold mb-4 text-teal-300">Owned Stocks</h2>
                 <div class="scrollable-content">
@@ -60,7 +57,6 @@
                 </div>
             </div>
             
-            <!-- Recent Trades -->
             <div class="section-card rounded-xl shadow-lg p-6">
                 <h2 class="text-2xl font-semibold mb-4 text-teal-300">Recent Trades</h2>
                 <div class="scrollable-content">
@@ -81,7 +77,7 @@
     </div>
 
     <script>
-        const API_BASE_URL = 'https://aibotbeta.onrender.com/api'; // **FIXED**: Use the full, absolute URL
+        const API_BASE_URL = '/api';
         
         const cashBalanceElem = document.getElementById('cash-balance');
         const totalValueElem = document.getElementById('total-value');
