@@ -1,5 +1,5 @@
 # app.py
-# Final Version: With dynamic trade sizing, auto-pause on API limit, and daily resume.
+# Final Version: API rate limiting, instant AI activation, multi-asset trading, dynamic trade sizing, and auto-pause.
 
 import os
 import time
@@ -13,13 +13,16 @@ from flask_cors import CORS
 from threading import Thread, Lock
 from datetime import datetime, timedelta, timezone
 import random
+import asyncio
+import httpx
 
 # --- Configuration ---
-# Use a list of Gemini API keys with the new variable names
 GEMINI_API_KEYS = [
     os.environ.get("GEMINI_API_KEY"),
     os.environ.get("GEMINI_API_KEY_2"),
-    os.environ.get("GEMINI_API_KEY_3")
+    os.environ.get("GEMINI_API_KEY_3"),
+    os.environ.get("GEMINI_API_KEY_4"),
+    os.environ.get("GEMINI_API_KEY_5")
 ]
 FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY")
 ADMIN_PASSWORD = "orosis"
@@ -27,30 +30,90 @@ ADMIN_PASSWORD = "orosis"
 FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
 INITIAL_CASH = 5000.00
 DB_FILE = "trades.db"
-# Base trade size is now a percentage of the initial cash
 BASE_TRADE_PERCENTAGE = 0.05
 LOOP_INTERVAL_SECONDS = 300
 STOCKS_TO_SCAN_PER_CYCLE = 15
-AI_LEARNING_TRADE_THRESHOLD = 5
 INITIAL_BUY_COUNT = 10
-# New: Rate limiting for Finnhub to avoid 429 errors
 FINNHUB_RATE_LIMIT_SECONDS = 2.0
+GEMINI_RATE_LIMIT_SECONDS = 10.0
 
 # --- Bot State ---
 bot_status_lock = Lock()
 bot_is_running = True
-# Track which API key is currently in use
 current_api_key_index = 0
-all_keys_exhausted = False  # Flag to track if all API keys are exhausted
+all_keys_exhausted = False
+historical_performance = []
 
 # --- AI Configuration (Lazy Initialization) ---
-ai_model = None
-ai_model_configured = False
+ai_models = {}
 ai_model_lock = Lock()
+ai_model_configured = False
+_last_gemini_request_time = 0
+
+def _enforce_gemini_rate_limit():
+    """Ensures a minimum delay between Gemini API requests."""
+    global _last_gemini_request_time
+    elapsed = time.time() - _last_gemini_request_time
+    if elapsed < GEMINI_RATE_LIMIT_SECONDS:
+        time.sleep(GEMINI_RATE_LIMIT_SECONDS - elapsed)
+    _last_gemini_request_time = time.time()
 
 
-def configure_ai():
-    global ai_model, ai_model_configured, current_api_key_index, all_keys_exhausted
+def get_ai_model(api_key_index):
+    """Retrieves a configured AI model or falls back to another key."""
+    if not ai_model_configured:
+        configure_ai_models()
+        if not ai_model_configured:
+            return None
+    
+    _enforce_gemini_rate_limit()
+
+    # Try to use the preferred key, then cycle through others
+    key_order = [api_key_index, (api_key_index + 1) % len(GEMINI_API_KEYS), (api_key_index + 2) % len(GEMINI_API_KEYS)]
+    
+    for i in key_order:
+        model_name = f'gemini-1.5-flash-{i}'
+        if model_name in ai_models:
+            return ai_models[model_name]
+            
+    return None
+
+class RiskData:
+    """Predefined risk profiles for different market sectors."""
+    SECTOR_RISKS = {
+        "Tech": {"risk_level": "High", "description": "High growth, high volatility."},
+        "Healthcare": {"risk_level": "Medium", "description": "Stable but can have high-risk biotech plays."},
+        "Finance": {"risk_level": "Medium", "description": "Established, but sensitive to economic changes."},
+        "Consumer Staples": {"risk_level": "Low", "description": "Stable, less susceptible to market swings."},
+        "Crypto": {"risk_level": "Very High", "description": "Extremely volatile, high-reward, high-risk."},
+        "Forex": {"risk_level": "Medium", "description": "Stable, but influenced by global events."},
+        "Default": {"risk_level": "Medium", "description": "General market risk."}
+    }
+
+def get_sector_for_symbol(symbol):
+    if symbol.startswith("BINANCE:"):
+        return "Crypto"
+    elif symbol.startswith("OANDA:"):
+        return "Forex"
+    tech_stocks = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA"]
+    healthcare_stocks = ["UNH", "JNJ", "LLY", "ABBV", "PFE"]
+    finance_stocks = ["JPM", "V", "MA", "GS", "MS", "AXP", "C", "WFC", "BAC"]
+    consumer_staples = ["PG", "KO", "PEP", "WMT", "COST", "MCD"]
+    
+    if symbol in tech_stocks:
+        return "Tech"
+    elif symbol in healthcare_stocks:
+        return "Healthcare"
+    elif symbol in finance_stocks:
+        return "Finance"
+    elif symbol in consumer_staples:
+        return "Consumer Staples"
+    else:
+        return "Default"
+
+def configure_ai_models():
+    """Configures all AI models on startup."""
+    global ai_models, ai_model_configured, all_keys_exhausted
     with ai_model_lock:
         if ai_model_configured:
             return
@@ -61,33 +124,21 @@ def configure_ai():
             bot_is_running = False
             return
             
-        available_key_found = False
-        start_index = current_api_key_index
-        while not available_key_found:
-            gemini_api_key = GEMINI_API_KEYS[current_api_key_index]
-            if gemini_api_key:
+        for i, api_key in enumerate(GEMINI_API_KEYS):
+            if api_key:
                 try:
-                    genai.configure(api_key=gemini_api_key)
-                    ai_model = genai.GenerativeModel('gemini-1.5-flash')
-                    print(f"Gemini AI model configured with key index {current_api_key_index}.")
-                    ai_model_configured = True
-                    available_key_found = True
+                    genai.configure(api_key=api_key)
+                    ai_models[f'gemini-1.5-flash-{i}'] = genai.GenerativeModel('gemini-1.5-flash')
+                    print(f"Gemini AI model configured for key index {i}.")
                 except Exception as e:
-                    print(f"ERROR: Failed to configure Gemini AI with key {current_api_key_index}: {e}")
-                    ai_model_configured = False
-                    current_api_key_index = (current_api_key_index + 1) % len(GEMINI_API_KEYS)
-                    if current_api_key_index == start_index:
-                        print("All API keys failed to configure. Pausing bot.")
-                        all_keys_exhausted = True
-                        bot_is_running = False
-                        break
-            else:
-                current_api_key_index = (current_api_key_index + 1) % len(GEMINI_API_KEYS)
-                if current_api_key_index == start_index:
-                    print("No valid Gemini API keys found. Pausing bot.")
-                    all_keys_exhausted = True
-                    bot_is_running = False
-                    break
+                    print(f"ERROR: Failed to configure Gemini AI with key index {i}: {e}")
+        
+        if ai_models:
+            ai_model_configured = True
+        else:
+            print("All API keys failed to configure. Pausing bot.")
+            all_keys_exhausted = True
+            bot_is_running = False
 
 
 # --- Database Functions ---
@@ -202,21 +253,19 @@ class PortfolioManager:
     def buy_initial_stocks(self):
         print("Starting initial stock purchase process...")
         time.sleep(5)
-        sp500 = self.api_client.get_sp500_constituents()
-        if not sp500:
-            print("Failed to fetch S&P 500 list for initial stocks.")
+        assets_to_buy = self.api_client.get_initial_assets_to_buy()
+        if not assets_to_buy:
+            print("Failed to get initial assets to buy.")
             return
 
-        stocks_to_buy = random.sample(sp500, min(INITIAL_BUY_COUNT, len(sp500)))
-        initial_trade_amount = self.initial_cash * BASE_TRADE_PERCENTAGE
-        for symbol in stocks_to_buy:
+        for symbol in assets_to_buy:
             price = self.api_client.get_quote(symbol)
+            initial_trade_amount = self.initial_cash * BASE_TRADE_PERCENTAGE
             if price and self.cash >= initial_trade_amount:
                 quantity = initial_trade_amount / price
                 self.buy_stock(symbol, quantity, price, "Initial portfolio seeding.", 0.5)
             else:
                 print(f"Skipping initial buy for {symbol}.")
-            # The centralized rate limiter handles the delay
         print("Initial buy-in complete.")
         self._reconstruct_portfolio_from_db()
 
@@ -240,16 +289,61 @@ class PortfolioManager:
                 "cash": self.cash, "owned_stocks": detailed_stocks,
                 "total_portfolio_value": total_value, "profit_loss": profit_loss
             }
+            
+    def get_historical_performance(self):
+        with self._lock:
+            all_trades = get_all_trades()
+            historical_data = []
+            
+            temp_cash = self.initial_cash
+            temp_stocks = {}
+
+            if not all_trades:
+                 historical_data.append({
+                    "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    "value": self.initial_cash
+                })
+                 return historical_data
+
+            all_symbols = list(set([trade['symbol'] for trade in all_trades]))
+            current_prices = asyncio.run(self.api_client.get_quotes_async(all_symbols))
+
+            for trade in all_trades:
+                symbol, quantity, price, action = trade['symbol'], trade['quantity'], trade['price'], trade['action']
+                timestamp = trade['timestamp']
+                
+                if action == 'BUY':
+                    temp_cash -= quantity * price
+                    temp_stocks[symbol] = temp_stocks.get(symbol, 0) + quantity
+                elif action == 'SELL':
+                    temp_cash += quantity * price
+                    if symbol in temp_stocks:
+                        temp_stocks[symbol] -= quantity
+                        if temp_stocks[symbol] < 1e-6:
+                            del temp_stocks[symbol]
+                            
+                current_value = temp_cash
+                for stock_symbol, qty in temp_stocks.items():
+                    current_value += qty * current_prices.get(stock_symbol, 0)
+                        
+                historical_data.append({
+                    "timestamp": timestamp,
+                    "value": current_value
+                })
+            
+            return historical_data
+
 
     def buy_stock(self, symbol, quantity, price, reasoning, confidence):
         with self._lock:
             cost = quantity * price
             if self.cash < cost:
+                print(f"FAILURE: Insufficient cash to buy {quantity:.4f} of {symbol}. Cash: ${self.cash:.2f}, Cost: ${cost:.2f}")
                 return False
             self.cash -= cost
             if symbol in self.stocks:
                 total_qty = self.stocks[symbol]['quantity'] + quantity
-                self.stocks[symbol]['avg_price'] = ((self.stocks[symbol]['avg_price'] * self.stocks[symbol]['quantity']) + cost) / total_qty
+                self.stocks[symbol]['avg_price'] = ((self.stocks[symbol]['avg_price'] * self.stocks[symbol]['quantity']) + cost) / new_total_quantity
                 self.stocks[symbol]['quantity'] = total_qty
             else:
                 self.stocks[symbol] = {'quantity': quantity, 'avg_price': price}
@@ -284,20 +378,38 @@ class PortfolioManager:
 # --- Finnhub Client ---
 class FinnhubClient:
     def __init__(self):
-        self.sp500_symbols = [
-            "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "META", "GOOG", "BRK.B",
-            "UNH", "JPM", "JNJ", "V", "XOM", "MA", "PG", "HD", "CVX", "LLY", "ABBV",
-            "PFE", "BAC", "KO", "TMO", "PEP", "AVGO", "WMT", "COST", "MCD", "CSCO"
-        ]
+        self.nyse_stocks = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "META", "GOOG", "BRK.B", "UNH", "JPM", "JNJ", "V", "XOM", "MA", "PG", "HD", "CVX", "LLY", "ABBV", "PFE", "BAC", "KO", "TMO", "PEP", "AVGO", "WMT", "COST", "MCD", "CSCO", "SPY", "QQQ", "DIA", "IWM", "GS", "MS", "AXP", "C", "WFC", "T", "VZ", "TMUS", "TSLA", "F", "GM", "RIVN", "F", "GM", "RIVN", "F", "GM", "RIVN", "F", "GM", "RIVN"]
+        self.crypto_pairs = ["BINANCE:BTCUSDT", "BINANCE:ETHUSDT", "BINANCE:XRPUSDT", "BINANCE:DOGEUSDT"]
+        self.forex_pairs = ["OANDA:EURUSD", "OANDA:GBPUSD", "OANDA:USDJPY", "OANDA:USDCAD"]
         self._last_request_time = 0
         print("Finnhub Client initialized.")
 
     def _enforce_rate_limit(self):
-        """Ensures a minimum delay between API requests to respect rate limits."""
         elapsed = time.time() - self._last_request_time
         if elapsed < FINNHUB_RATE_LIMIT_SECONDS:
             time.sleep(FINNHUB_RATE_LIMIT_SECONDS - elapsed)
         self._last_request_time = time.time()
+
+    async def get_quotes_async(self, symbols):
+        self._enforce_rate_limit()
+        async with httpx.AsyncClient() as client:
+            tasks = []
+            for symbol in symbols:
+                params = {'symbol': symbol.upper(), 'token': os.environ.get("FINNHUB_API_KEY")}
+                tasks.append(client.get(f"{FINNHUB_BASE_URL}/quote", params=params))
+                
+            responses = await asyncio.gather(*tasks)
+            
+            quotes = {}
+            for i, response in enumerate(responses):
+                if response.status_code == 200:
+                    data = response.json()
+                    quotes[symbols[i]] = data.get('c')
+                else:
+                    print(f"ERROR: Finnhub request failed for {symbols[i]}: {response.status_code}")
+                    quotes[symbols[i]] = None
+            
+            return quotes
 
     def _make_request(self, endpoint, params=None):
         api_key = os.environ.get("FINNHUB_API_KEY")
@@ -308,7 +420,6 @@ class FinnhubClient:
             params = {}
         params['token'] = api_key
         
-        # Enforce rate limit before making the request
         self._enforce_rate_limit()
 
         try:
@@ -331,45 +442,61 @@ class FinnhubClient:
     def get_market_news(self):
         return self._make_request('news', {'category': 'general'})
 
-    def get_sp500_constituents(self):
-        return self.sp500_symbols
+    def get_initial_assets_to_buy(self):
+        all_assets = self.nyse_stocks + self.crypto_pairs + self.forex_pairs
+        return random.sample(all_assets, min(INITIAL_BUY_COUNT, len(all_assets)))
+
+    def get_assets_to_analyze(self, owned_assets):
+        num_stocks_to_sample = STOCKS_TO_SCAN_PER_CYCLE - len(owned_assets)
+        if num_stocks_to_sample < 0:
+            num_stocks_to_sample = 0
+        
+        all_tradable_assets = self.nyse_stocks + self.crypto_pairs + self.forex_pairs
+        random_sample = random.sample(all_tradable_assets, min(num_stocks_to_sample, len(all_tradable_assets)))
+        
+        return list(set(random_sample + owned_assets))
 
 
 # --- AI Decision Making & Bot Loop ---
-def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, trade_count):
-    global bot_is_running, all_keys_exhausted, current_api_key_index, ai_model, ai_model_configured
-    
-    if not ai_model_configured:
-        configure_ai()
-        if not ai_model_configured:
-            return None
+def get_ai_decision_and_analysis(symbol, price, news, portfolio, recent_trades, market_news, trade_count):
+    """
+    Combines AI analysis and decision into a single function to save API calls.
+    Uses GEMINI_API_KEY (index 0) with fallback.
+    """
+    ai_model = get_ai_model(0)
+    if not ai_model: return None
+
+    sector = get_sector_for_symbol(symbol)
+    risk_profile = RiskData.SECTOR_RISKS.get(sector, RiskData.SECTOR_RISKS["Default"])
 
     prompt = f"""
-    You are an expert stock trading analyst bot. Your goal is to analyze real-time market data, news, and a portfolio to make profitable trading decisions.
+    You are an expert stock and currency trading analyst bot. Your goal is to analyze real-time market data and make a strategic trading decision. The assets you can analyze include stocks, cryptocurrencies, and forex pairs.
+    
+    **Instructions for Analysis and Decision:**
+    - First, perform a multi-factor analysis of the asset's potential, including its risk profile, news sentiment, and market position.
+    - Second, based on your analysis, make a final, deliberate BUY, SELL, or HOLD decision.
+    - Your strategy should be to look at the bigger picture and long-term trends. Do not sell at the first sign of minor trouble unless the analysis strongly indicates a fundamental change.
+    - Use the `trade_size_multiplier` to take "SMART risks":
+        - For a stable asset (e.g., in Consumer Staples) with positive analysis, use a higher multiplier.
+        - For a high-risk, high-reward asset (e.g., in Tech or Crypto) with positive analysis, use a carefully chosen moderate multiplier to limit exposure while still capitalizing on potential gains.
+    - Your `reasoning` must clearly justify your decision by referencing the provided data and your strategic outlook.
 
-    Here is the current information:
+    **Current Information:**
     - **Current Time:** {datetime.now()}
-    - **Stock Symbol:** {symbol}
+    - **Asset Symbol:** {symbol}
     - **Current Price:** ${price:.2f}
     - **Recent News for {symbol}:** {json.dumps(news, indent=2)}
     - **Current Portfolio Status:** {json.dumps(portfolio, indent=2)}
     - **Recent Trades by Bot:** {json.dumps(recent_trades, indent=2)}
     - **General Market News:** {json.dumps(market_news[:5], indent=2)}
     - **Total Trades Made:** {trade_count}
-
-    Analyze the provided data. Determine if a 'BUY', 'SELL', or 'HOLD' action is appropriate.
-    - **BUY:** Recommend a BUY if the stock is undervalued, has positive news, and shows strong potential for growth.
-    - **SELL:** Recommend a SELL if the stock is overvalued, has negative news, or the current holdings are at a significant profit or loss that you deem appropriate to close.
-    - **HOLD:** Recommend a HOLD if the data is inconclusive or the current position is stable.
-
-    Provide a confidence score for your decision from 0.0 (no confidence) to 1.0 (very high confidence).
-
-    Based on your confidence, also provide a `trade_size_multiplier` from 0.5 to 2.0. A multiplier of 1.0 corresponds to the base trade size. Use a higher multiplier for high-confidence trades and a lower multiplier for low-confidence trades.
+    - **Asset Sector:** {sector}
+    - **Sector Risk Profile:** {risk_profile['description']}
 
     Format your response as a JSON object with the following keys:
     {{
         "action": "BUY" or "SELL" or "HOLD",
-        "reasoning": "A concise explanation for your decision.",
+        "reasoning": "A concise explanation for your decision, based on the analysis and bigger picture.",
         "confidence": 0.0-1.0,
         "trade_size_multiplier": 0.5-2.0
     }}
@@ -379,26 +506,46 @@ def get_ai_decision(symbol, price, news, portfolio, recent_trades, market_news, 
         response = ai_model.generate_content(prompt)
         decision_text = response.text.strip().replace("```json", "").replace("```", "")
         decision = json.loads(decision_text)
-        print(f"AI Decision for {symbol} using key {current_api_key_index}: {decision}")
+        print(f"AI Analysis and Decision for {symbol}: {decision}")
         return decision
     except google_exceptions.ResourceExhausted as e:
-        print(f"CRITICAL ERROR: Gemini API key {current_api_key_index} limit reached.")
-        
-        with bot_status_lock:
-            current_api_key_index = (current_api_key_index + 1) % len(GEMINI_API_KEYS)
-            ai_model_configured = False
-            
-            if current_api_key_index == 0:
-                print("All Gemini API keys are exhausted. Auto-pausing bot until tomorrow.")
-                bot_is_running = False
-                all_keys_exhausted = True
-            else:
-                print(f"Switching to next Gemini API key at index {current_api_key_index}.")
-        
+        print(f"CRITICAL ERROR: Gemini API key limit reached. Falling back.")
         return None
     except Exception as e:
-        print(f"ERROR: Failed to get or parse AI decision for {symbol} using key {current_api_key_index}: {e}")
+        print(f"ERROR: Failed to get or parse AI decision for {symbol}: {e}")
         return None
+
+def get_ai_inquiry(question, portfolio_status, recent_trades):
+    """AI #3: Admin Panel Inquiry. Uses GEMINI_API_KEY_2 or fallback."""
+    
+    ai_model_inquiry = get_ai_model(2)
+    if not ai_model_inquiry: return "Error: AI model for inquiries is not available."
+    
+    try:
+        prompt = f"""
+        You are an AI stock bot assistant. Your task is to answer questions about the bot's portfolio, trading strategy, and market conditions based on the provided data.
+        
+        **Bot's Current Portfolio:**
+        {json.dumps(portfolio_status, indent=2)}
+        
+        **Bot's Recent Trades:**
+        {json.dumps(recent_trades, indent=2)}
+        
+        **User's Question:**
+        {question}
+        
+        Provide a helpful and concise answer to the user's question.
+        """
+        response = ai_model_inquiry.generate_content(prompt)
+        answer = response.text
+        return answer
+        
+    except google_exceptions.ResourceExhausted as e:
+        print(f"CRITICAL ERROR: Gemini API key limit reached for inquiries. Falling back.")
+        return "Error: API quota for inquiries has been exhausted. Please try again later."
+    except Exception as e:
+        print(f"Error in ask_ai with key #3: {e}")
+        return "Error: Failed to get a response from the AI."
 
 
 def bot_trading_loop(portfolio_manager, finnhub_client):
@@ -415,18 +562,18 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
 
         print("\n--- Starting new trading cycle ---")
         trade_count = len(get_all_trades())
-        confidence_threshold = 0.65 if trade_count < (INITIAL_BUY_COUNT + AI_LEARNING_TRADE_THRESHOLD) else 0.75
+        confidence_threshold = 0.65 
 
         print(f"Current trade count: {trade_count}. Confidence threshold set to {confidence_threshold * 100}%.")
 
-        sp500 = finnhub_client.get_sp500_constituents()
         portfolio = portfolio_manager.get_portfolio_status()
-        owned_stocks = list(portfolio['owned_stocks'].keys())
+        owned_assets = list(portfolio['owned_stocks'].keys())
         market_news = finnhub_client.get_market_news()
-        stocks_to_analyze = list(set(random.sample(sp500, STOCKS_TO_SCAN_PER_CYCLE) + owned_stocks))
-        print(f"This cycle, analyzing: {stocks_to_analyze}")
+        assets_to_analyze = finnhub_client.get_assets_to_analyze(owned_assets)
+        print(f"This cycle, analyzing: {assets_to_analyze}")
+        print("Starting AI decision-making for this cycle.")
 
-        for symbol in stocks_to_analyze:
+        for symbol in assets_to_analyze:
             with bot_status_lock:
                 if not bot_is_running:
                     break
@@ -439,8 +586,9 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
             news = finnhub_client.get_company_news(symbol)
             trades = get_recent_trades(5)
             current_portfolio_status = portfolio
-            ai_decision = get_ai_decision(symbol, price, news, current_portfolio_status, trades, market_news, trade_count)
-
+            
+            ai_decision = get_ai_decision_and_analysis(symbol, price, news, current_portfolio_status, trades, market_news, trade_count)
+            
             if ai_decision and ai_decision.get('confidence', 0) > confidence_threshold:
                 action = ai_decision.get('action', '').upper()
                 reasoning = ai_decision.get('reasoning', '')
@@ -461,10 +609,7 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
                         quantity_to_sell = min(dynamic_trade_amount / price, current_portfolio_status['owned_stocks'][symbol]['quantity'])
                         if quantity_to_sell > 0:
                             portfolio_manager.sell_stock(symbol, quantity_to_sell, price, reasoning, confidence)
-            
-            # The centralized rate limiter handles the delay
-            # We don't need a separate sleep here anymore
-
+        
         print(f"--- Cycle finished. Waiting {LOOP_INTERVAL_SECONDS}s. ---")
         time.sleep(LOOP_INTERVAL_SECONDS)
 
@@ -490,7 +635,7 @@ def scheduler_loop():
 
 # --- Global Instances & App Initialization ---
 init_db()
-configure_ai()
+configure_ai_models()
 finnhub_client = FinnhubClient()
 portfolio_manager = PortfolioManager(INITIAL_CASH, finnhub_client, DB_FILE)
 
@@ -515,6 +660,10 @@ def admin_dashboard():
 @app.route("/api/portfolio", methods=['GET'])
 def get_portfolio():
     return jsonify(portfolio_manager.get_portfolio_status())
+
+@app.route("/api/portfolio/history", methods=['GET'])
+def get_portfolio_history():
+    return jsonify(portfolio_manager.get_historical_performance())
 
 @app.route("/api/trades", methods=['GET'])
 def get_trades():
@@ -551,11 +700,11 @@ def get_bot_status():
 
 @app.route("/api/ask", methods=['POST'])
 def ask_ai():
-    global ai_model, ai_model_configured
+    global ai_model_configured
     if not ai_model_configured:
-        configure_ai()
+        configure_ai_models()
         if not ai_model_configured:
-            return jsonify({"answer": "Error: AI model not configured."}), 500
+            return jsonify({"answer": "Error: AI models are not configured."}), 500
     
     question = request.json.get('question')
     if not question:
@@ -565,22 +714,7 @@ def ask_ai():
         portfolio_status = portfolio_manager.get_portfolio_status()
         recent_trades = get_recent_trades(5)
         
-        prompt = f"""
-        You are an AI stock bot assistant. Your task is to answer questions about the bot's portfolio, trading strategy, and market conditions based on the provided data.
-        
-        **Bot's Current Portfolio:**
-        {json.dumps(portfolio_status, indent=2)}
-        
-        **Bot's Recent Trades:**
-        {json.dumps(recent_trades, indent=2)}
-        
-        **User's Question:**
-        {question}
-        
-        Provide a helpful and concise answer to the user's question.
-        """
-        response = ai_model.generate_content(prompt)
-        answer = response.text
+        answer = get_ai_inquiry(question, portfolio_status, recent_trades)
         return jsonify({"answer": answer})
         
     except Exception as e:
@@ -596,3 +730,4 @@ if __name__ == "__main__":
 
     port = int(os.environ.get('PORT', 8000))
     app.run(host='0.0.0.0', port=port, debug=True, use_reloader=False)
+
