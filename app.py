@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Fixed reset, optimized schedule, API rate limiting, multi-asset trading, and auto-pause.
+# Final Version: Optimized for Free Tier Gemini API, API rate limiting, multi-asset trading, and auto-pause.
 
 import os
 import time
@@ -32,7 +32,9 @@ FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
 INITIAL_CASH = 5000.00
 DB_FILE = "trades.db"
 BASE_TRADE_PERCENTAGE = 0.05
-LOOP_INTERVAL_SECONDS = 172.8
+# FIX: Adjusted to be more conservative for free tier API limits
+# 864 seconds = 14.4 minutes. Allows ~100 cycles per day.
+LOOP_INTERVAL_SECONDS = 864
 STOCKS_TO_SCAN_PER_CYCLE = 15
 INITIAL_BUY_COUNT = 10
 FINNHUB_RATE_LIMIT_SECONDS = 2.0
@@ -572,6 +574,13 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
         now_et = datetime.now(pytz.timezone('America/New_York'))
         is_market_open = (now_et.weekday() < 5 and now_et.hour >= 9 and now_et.minute >= 30 and (now_et.hour < 16 or (now_et.hour == 16 and now_et.minute == 0)))
 
+        # Pre-market analysis
+        if not is_market_open and now_et.weekday() < 5 and now_et.hour == 9 and now_et.minute == 25:
+             print("Performing pre-market analysis...")
+             market_news = finnhub_client.get_market_news()
+             portfolio = portfolio_manager.get_portfolio_status()
+             get_ai_decision_and_analysis("market", 0, None, portfolio, None, market_news, 0)
+        
         if is_market_open:
             print("\n--- Starting new trading cycle (MARKET OPEN) ---")
             trade_count = len(get_all_trades())
