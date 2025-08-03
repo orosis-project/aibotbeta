@@ -1,5 +1,5 @@
 # app.py
-# Final Version: API rate limiting, instant AI activation, multi-asset trading, dynamic trade sizing, and auto-pause.
+# Final Version: Optimized schedule for 5 API keys, API rate limiting, multi-asset trading, and auto-pause.
 
 import os
 import time
@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 import random
 import asyncio
 import httpx
+import pytz
 
 # --- Configuration ---
 GEMINI_API_KEYS = [
@@ -31,7 +32,8 @@ FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
 INITIAL_CASH = 5000.00
 DB_FILE = "trades.db"
 BASE_TRADE_PERCENTAGE = 0.05
-LOOP_INTERVAL_SECONDS = 300
+# FIX: Adjusted to utilize the full quota of 5 API keys
+LOOP_INTERVAL_SECONDS = 172.8
 STOCKS_TO_SCAN_PER_CYCLE = 15
 INITIAL_BUY_COUNT = 10
 FINNHUB_RATE_LIMIT_SECONDS = 2.0
@@ -68,9 +70,7 @@ def get_ai_model(api_key_index):
     
     _enforce_gemini_rate_limit()
 
-    # Try to use the preferred key, then cycle through others
     key_order = list(range(len(GEMINI_API_KEYS)))
-    # Ensure the preferred key is checked first
     key_order.remove(api_key_index)
     key_order.insert(0, api_key_index)
 
@@ -520,9 +520,9 @@ def get_ai_decision_and_analysis(symbol, price, news, portfolio, recent_trades, 
         return None
 
 def get_ai_inquiry(question, portfolio_status, recent_trades):
-    """AI #3: Admin Panel Inquiry. Uses GEMINI_API_KEY_2 or fallback."""
+    """AI for Admin Panel Inquiry. Uses GEMINI_API_KEY_2 (index 1) with fallback."""
     
-    ai_model_inquiry = get_ai_model(2)
+    ai_model_inquiry = get_ai_model(1)
     if not ai_model_inquiry: return "Error: AI model for inquiries is not available."
     
     try:
@@ -548,7 +548,7 @@ def get_ai_inquiry(question, portfolio_status, recent_trades):
         print(f"CRITICAL ERROR: Gemini API key limit reached for inquiries. Falling back.")
         return "Error: API quota for inquiries has been exhausted. Please try again later."
     except Exception as e:
-        print(f"Error in ask_ai with key #3: {e}")
+        print(f"Error in ask_ai with key #1: {e}")
         return "Error: Failed to get a response from the AI."
 
 
@@ -563,59 +563,124 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
             print(f"Bot is {status_reason}. Skipping trading cycle.")
             time.sleep(30)
             continue
-
-        print("\n--- Starting new trading cycle ---")
-        trade_count = len(get_all_trades())
-        confidence_threshold = 0.65 
-
-        print(f"Current trade count: {trade_count}. Confidence threshold set to {confidence_threshold * 100}%.")
-
-        portfolio = portfolio_manager.get_portfolio_status()
-        owned_assets = list(portfolio['owned_stocks'].keys())
-        market_news = finnhub_client.get_market_news()
-        assets_to_analyze = finnhub_client.get_assets_to_analyze(owned_assets)
-        print(f"This cycle, analyzing: {assets_to_analyze}")
-        print("Starting AI decision-making for this cycle.")
-
-        for symbol in assets_to_analyze:
-            with bot_status_lock:
-                if not bot_is_running:
-                    break
-
-            print(f"Analyzing {symbol}...")
-            price = finnhub_client.get_quote(symbol)
-            if not price:
-                continue
-
-            news = finnhub_client.get_company_news(symbol)
-            trades = get_recent_trades(5)
-            current_portfolio_status = portfolio
-            
-            ai_decision = get_ai_decision_and_analysis(symbol, price, news, current_portfolio_status, trades, market_news, trade_count)
-            
-            if ai_decision and ai_decision.get('confidence', 0) > confidence_threshold:
-                action = ai_decision.get('action', '').upper()
-                reasoning = ai_decision.get('reasoning', '')
-                confidence = ai_decision.get('confidence', 0)
-                trade_size_multiplier = ai_decision.get('trade_size_multiplier', 1.0)
-                
-                dynamic_trade_amount = (current_portfolio_status['total_portfolio_value'] * BASE_TRADE_PERCENTAGE) * trade_size_multiplier
-                dynamic_trade_amount = min(dynamic_trade_amount, current_portfolio_status['cash'])
-                
-                print(f"Decision: {action} with confidence {confidence:.2f}. Dynamic Trade Amount: ${dynamic_trade_amount:.2f}")
-
-                if action == 'BUY':
-                    if dynamic_trade_amount >= price:
-                        quantity = dynamic_trade_amount / price
-                        portfolio_manager.buy_stock(symbol, quantity, price, reasoning, confidence)
-                elif action == 'SELL':
-                    if symbol in current_portfolio_status['owned_stocks']:
-                        quantity_to_sell = min(dynamic_trade_amount / price, current_portfolio_status['owned_stocks'][symbol]['quantity'])
-                        if quantity_to_sell > 0:
-                            portfolio_manager.sell_stock(symbol, quantity_to_sell, price, reasoning, confidence)
         
-        print(f"--- Cycle finished. Waiting {LOOP_INTERVAL_SECONDS}s. ---")
-        time.sleep(LOOP_INTERVAL_SECONDS)
+        now_et = datetime.now(pytz.timezone('America/New_York'))
+        is_market_open = (now_et.weekday() < 5 and now_et.hour >= 9 and now_et.minute >= 30 and (now_et.hour < 16 or (now_et.hour == 16 and now_et.minute == 0)))
+
+        if is_market_open:
+            print("\n--- Starting new trading cycle (MARKET OPEN) ---")
+            trade_count = len(get_all_trades())
+            confidence_threshold = 0.65 
+
+            print(f"Current trade count: {trade_count}. Confidence threshold set to {confidence_threshold * 100}%.")
+
+            portfolio = portfolio_manager.get_portfolio_status()
+            owned_assets = list(portfolio['owned_stocks'].keys())
+            market_news = finnhub_client.get_market_news()
+            assets_to_analyze = finnhub_client.get_assets_to_analyze(owned_assets)
+            print(f"This cycle, analyzing: {assets_to_analyze}")
+            print("Starting AI decision-making for this cycle.")
+
+            for symbol in assets_to_analyze:
+                with bot_status_lock:
+                    if not bot_is_running:
+                        break
+
+                print(f"Analyzing {symbol}...")
+                price = finnhub_client.get_quote(symbol)
+                if not price:
+                    continue
+
+                news = finnhub_client.get_company_news(symbol)
+                trades = get_recent_trades(5)
+                current_portfolio_status = portfolio
+                
+                ai_decision = get_ai_decision_and_analysis(symbol, price, news, current_portfolio_status, trades, market_news, trade_count)
+                
+                if ai_decision and ai_decision.get('confidence', 0) > confidence_threshold:
+                    action = ai_decision.get('action', '').upper()
+                    reasoning = ai_decision.get('reasoning', '')
+                    confidence = ai_decision.get('confidence', 0)
+                    trade_size_multiplier = ai_decision.get('trade_size_multiplier', 1.0)
+                    
+                    dynamic_trade_amount = (current_portfolio_status['total_portfolio_value'] * BASE_TRADE_PERCENTAGE) * trade_size_multiplier
+                    dynamic_trade_amount = min(dynamic_trade_amount, current_portfolio_status['cash'])
+
+                    if action == 'BUY':
+                        if dynamic_trade_amount >= price:
+                            quantity = dynamic_trade_amount / price
+                            portfolio_manager.buy_stock(symbol, quantity, price, reasoning, confidence)
+                    elif action == 'SELL':
+                        if symbol in current_portfolio_status['owned_stocks']:
+                            quantity_to_sell = min(dynamic_trade_amount / price, current_portfolio_status['owned_stocks'][symbol]['quantity'])
+                            if quantity_to_sell > 0:
+                                portfolio_manager.sell_stock(symbol, quantity_to_sell, price, reasoning, confidence)
+        
+            print(f"--- Cycle finished. Waiting {LOOP_INTERVAL_SECONDS}s. ---")
+            time.sleep(LOOP_INTERVAL_SECONDS)
+        
+        elif not is_market_open and now_et.weekday() < 5 and now_et.hour < 9: # Pre-market analysis
+            print("Performing pre-market analysis...")
+            market_news = finnhub_client.get_market_news()
+            portfolio = portfolio_manager.get_portfolio_status()
+            get_ai_decision_and_analysis("market", 0, None, portfolio, None, market_news, 0)
+        
+        elif not is_market_open and now_et.weekday() < 5 and now_et.hour >= 16 and now_et.minute >= 5: # Post-market analysis
+            print("Performing post-market analysis...")
+            market_news = finnhub_client.get_market_news()
+            portfolio = portfolio_manager.get_portfolio_status()
+            get_ai_decision_and_analysis("market", 0, None, portfolio, None, market_news, 0)
+
+        elif now_et.weekday() >= 5: # Weekend Trading for crypto and forex
+            print("\n--- Starting new trading cycle (WEEKEND) ---")
+            portfolio = portfolio_manager.get_portfolio_status()
+            owned_assets = list(portfolio['owned_stocks'].keys())
+            crypto_forex_assets = [a for a in owned_assets if a.startswith("BINANCE:") or a.startswith("OANDA:")]
+            if not crypto_forex_assets:
+                print("No crypto or forex assets to analyze. Sleeping...")
+                time.sleep(300)
+                continue
+            
+            for symbol in crypto_forex_assets:
+                with bot_status_lock:
+                    if not bot_is_running:
+                        break
+                
+                print(f"Analyzing {symbol}...")
+                price = finnhub_client.get_quote(symbol)
+                if not price:
+                    continue
+
+                news = finnhub_client.get_company_news(symbol)
+                trades = get_recent_trades(5)
+                current_portfolio_status = portfolio
+                ai_decision = get_ai_decision_and_analysis(symbol, price, news, current_portfolio_status, trades, None, 0)
+
+                if ai_decision and ai_decision.get('confidence', 0) > 0.7:
+                    action = ai_decision.get('action', '').upper()
+                    reasoning = ai_decision.get('reasoning', '')
+                    confidence = ai_decision.get('confidence', 0)
+                    trade_size_multiplier = ai_decision.get('trade_size_multiplier', 1.0)
+                    
+                    dynamic_trade_amount = (current_portfolio_status['total_portfolio_value'] * BASE_TRADE_PERCENTAGE) * trade_size_multiplier
+                    dynamic_trade_amount = min(dynamic_trade_amount, current_portfolio_status['cash'])
+
+                    if action == 'BUY':
+                        if dynamic_trade_amount >= price:
+                            quantity = dynamic_trade_amount / price
+                            portfolio_manager.buy_stock(symbol, quantity, price, reasoning, confidence)
+                    elif action == 'SELL':
+                        if symbol in current_portfolio_status['owned_stocks']:
+                            quantity_to_sell = min(dynamic_trade_amount / price, current_portfolio_status['owned_stocks'][symbol]['quantity'])
+                            if quantity_to_sell > 0:
+                                portfolio_manager.sell_stock(symbol, quantity_to_sell, price, reasoning, confidence)
+                
+            print(f"--- Weekend cycle finished. Waiting {LOOP_INTERVAL_SECONDS}s. ---")
+            time.sleep(LOOP_INTERVAL_SECONDS)
+        
+        else:
+            print("Market is closed. Bot is idle.")
+            time.sleep(60)
 
 
 # --- Scheduler Loop for Daily Resume ---
@@ -683,7 +748,7 @@ def start_bot():
     global bot_is_running, all_keys_exhausted
     with bot_status_lock:
         if all_keys_exhausted:
-            return jsonify({"status": "paused", "reason": "All API keys are exhausted. Bot will resume automatically tomorrow."}), 400
+            return jsonify({"status": "paused_gemini_api", "reason": "All API keys are exhausted. Bot will resume automatically tomorrow."}), 400
         bot_is_running = True
         return jsonify({"status": "running"})
 
@@ -697,9 +762,16 @@ def pause_bot():
 @app.route("/api/bot/status", methods=['GET'])
 def get_bot_status():
     with bot_status_lock:
-        status = "running" if bot_is_running else "paused"
         if all_keys_exhausted:
-            status = "paused_apikey"
+            return jsonify({"status": "paused_gemini_api"})
+            
+        now_et = datetime.now(pytz.timezone('America/New_York'))
+        is_market_open = (now_et.weekday() < 5 and now_et.hour >= 9 and now_et.minute >= 30 and (now_et.hour < 16 or (now_et.hour == 16 and now_et.minute == 0)))
+        
+        if bot_is_running and not is_market_open and now_et.weekday() < 5:
+            return jsonify({"status": "paused_for_market"})
+        
+        status = "running" if bot_is_running else "paused"
     return jsonify({"status": status})
 
 @app.route("/api/ask", methods=['POST'])
@@ -718,7 +790,26 @@ def ask_ai():
         portfolio_status = portfolio_manager.get_portfolio_status()
         recent_trades = get_recent_trades(5)
         
-        answer = get_ai_inquiry(question, portfolio_status, recent_trades)
+        ai_model_inquiry = get_ai_model(1)
+        if not ai_model_inquiry:
+            return jsonify({"answer": "Error: AI model for inquiries is not available."}), 500
+            
+        prompt = f"""
+        You are an AI stock bot assistant. Your task is to answer questions about the bot's portfolio, trading strategy, and market conditions based on the provided data.
+        
+        **Bot's Current Portfolio:**
+        {json.dumps(portfolio_status, indent=2)}
+        
+        **Bot's Recent Trades:**
+        {json.dumps(recent_trades, indent=2)}
+        
+        **User's Question:**
+        {question}
+        
+        Provide a helpful and concise answer to the user's question.
+        """
+        response = ai_model_inquiry.generate_content(prompt)
+        answer = response.text
         return jsonify({"answer": answer})
         
     except Exception as e:
