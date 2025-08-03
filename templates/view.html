@@ -21,6 +21,7 @@
             <p class="mt-2 text-lg text-gray-400">Live, read-only view of the bot's portfolio.</p>
         </header>
 
+        <!-- Portfolio Summary -->
         <div class="section-card rounded-xl shadow-lg p-6 mb-8">
             <h2 class="text-2xl font-semibold mb-4 text-teal-300">Portfolio Summary</h2>
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 text-center">
@@ -38,10 +39,22 @@
                 </div>
             </div>
         </div>
+        
+        <hr class="border-gray-700 mb-8">
 
+        <!-- Portfolio Performance Chart -->
+        <div class="section-card rounded-xl shadow-lg p-6 mb-8">
+            <h2 class="text-2xl font-semibold mb-4 text-teal-300">Portfolio Performance</h2>
+            <div class="bg-gray-800 p-4 rounded-lg shadow-inner">
+                <canvas id="performanceChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Owned Stocks & Recent Trades -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+            <!-- Owned Stocks -->
             <div class="section-card rounded-xl shadow-lg p-6">
-                <h2 class="text-2xl font-semibold mb-4 text-teal-300">Owned Stocks</h2>
+                <h2 class="text-2xl font-semibold mb-4 text-teal-300">Owned Assets</h2>
                 <div class="scrollable-content">
                     <table class="min-w-full text-sm">
                         <thead>
@@ -52,11 +65,12 @@
                                 <th class="py-2 text-left">Current Value</th>
                             </tr>
                         </thead>
-                        <tbody id="owned-stocks-body"></tbody>
+                        <tbody id="owned-assets-body"></tbody>
                     </table>
                 </div>
             </div>
             
+            <!-- Recent Trades -->
             <div class="section-card rounded-xl shadow-lg p-6">
                 <h2 class="text-2xl font-semibold mb-4 text-teal-300">Recent Trades</h2>
                 <div class="scrollable-content">
@@ -67,6 +81,7 @@
                                 <th class="py-2 text-left">Symbol</th>
                                 <th class="py-2 text-left">Action</th>
                                 <th class="py-2 text-left">Quantity</th>
+                                <th class="py-2 text-left">Reasoning</th>
                             </tr>
                         </thead>
                         <tbody id="recent-trades-body"></tbody>
@@ -75,6 +90,9 @@
             </div>
         </div>
     </div>
+    
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
     <script>
         const API_BASE_URL = '/api';
@@ -82,49 +100,104 @@
         const cashBalanceElem = document.getElementById('cash-balance');
         const totalValueElem = document.getElementById('total-value');
         const profitLossElem = document.getElementById('profit-loss');
-        const ownedStocksBodyElem = document.getElementById('owned-stocks-body');
+        const ownedAssetsBodyElem = document.getElementById('owned-assets-body');
         const recentTradesBodyElem = document.getElementById('recent-trades-body');
 
         const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
         const formatDate = (dateString) => new Date(dateString).toLocaleString();
 
+        let performanceChart;
+        const renderChart = (data) => {
+            const ctx = document.getElementById('performanceChart').getContext('2d');
+            
+            const labels = data.map(item => formatDate(item.timestamp));
+            const values = data.map(item => item.value);
+
+            if (performanceChart) {
+                performanceChart.destroy();
+            }
+
+            performanceChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Portfolio Value (USD)',
+                        data: values,
+                        borderColor: '#2dd4bf', // Teal color
+                        backgroundColor: 'rgba(45, 212, 191, 0.2)',
+                        borderWidth: 2,
+                        tension: 0.3,
+                        fill: true,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            ticks: {
+                                color: '#e2e8f0',
+                            },
+                            grid: {
+                                color: 'rgba(255,255,255,0.1)',
+                            },
+                        },
+                        y: {
+                            ticks: {
+                                color: '#e2e8f0',
+                                callback: function(value, index, ticks) {
+                                    return formatCurrency(value);
+                                }
+                            },
+                            grid: {
+                                color: 'rgba(255,255,255,0.1)',
+                            },
+                        }
+                    }
+                }
+            });
+        };
+        
         const fetchData = async () => {
             try {
-                const [portfolioRes, tradesRes] = await Promise.all([
+                const [portfolioRes, tradesRes, historyRes] = await Promise.all([
                     fetch(`${API_BASE_URL}/portfolio`),
-                    fetch(`${API_BASE_URL}/trades`)
+                    fetch(`${API_BASE_URL}/trades`),
+                    fetch(`${API_BASE_URL}/portfolio/history`)
                 ]);
 
-                if (!portfolioRes.ok || !tradesRes.ok) throw new Error('API endpoints failed.');
+                if (!portfolioRes.ok || !tradesRes.ok || !historyRes.ok) throw new Error('API endpoints failed.');
 
                 const portfolioData = await portfolioRes.json();
                 const tradesData = await tradesRes.json();
+                const historyData = await historyRes.json();
 
                 cashBalanceElem.textContent = formatCurrency(portfolioData.cash);
                 totalValueElem.textContent = formatCurrency(portfolioData.total_portfolio_value);
                 profitLossElem.textContent = formatCurrency(portfolioData.profit_loss);
                 profitLossElem.style.color = portfolioData.profit_loss >= 0 ? '#48bb78' : '#f56565';
 
-                ownedStocksBodyElem.innerHTML = '';
-                const ownedStocks = portfolioData.owned_stocks;
-                if (Object.keys(ownedStocks).length === 0) {
-                    ownedStocksBodyElem.innerHTML = `<tr><td colspan="4" class="text-center py-4 text-gray-500">No stocks owned yet.</td></tr>`;
+                ownedAssetsBodyElem.innerHTML = '';
+                const ownedAssets = portfolioData.owned_stocks;
+                if (Object.keys(ownedAssets).length === 0) {
+                    ownedAssetsBodyElem.innerHTML = `<tr><td colspan="4" class="text-center py-4 text-gray-500">No assets owned yet.</td></tr>`;
                 } else {
-                    for (const symbol in ownedStocks) {
-                        const stock = ownedStocks[symbol];
-                        ownedStocksBodyElem.innerHTML += `
+                    for (const symbol in ownedAssets) {
+                        const asset = ownedAssets[symbol];
+                        ownedAssetsBodyElem.innerHTML += `
                             <tr>
                                 <td class="py-2 font-medium">${symbol}</td>
-                                <td class="py-2">${stock.quantity.toFixed(4)}</td>
-                                <td class="py-2">${formatCurrency(stock.average_buy_price)}</td>
-                                <td class="py-2">${formatCurrency(stock.current_value)}</td>
+                                <td class="py-2">${asset.quantity.toFixed(4)}</td>
+                                <td class="py-2">${formatCurrency(asset.average_buy_price)}</td>
+                                <td class="py-2">${formatCurrency(asset.current_value)}</td>
                             </tr>`;
                     }
                 }
 
                 recentTradesBodyElem.innerHTML = '';
                 if (tradesData.length === 0) {
-                    recentTradesBodyElem.innerHTML = `<tr><td colspan="4" class="text-center py-4 text-gray-500">No trades made yet.</td></tr>`;
+                    recentTradesBodyElem.innerHTML = `<tr><td colspan="5" class="text-center py-4 text-gray-500">No trades made yet.</td></tr>`;
                 } else {
                     tradesData.forEach(trade => {
                         const actionColor = trade.action === 'BUY' ? 'text-green-400' : 'text-red-400';
@@ -134,9 +207,13 @@
                                 <td class="py-2 font-medium">${trade.symbol}</td>
                                 <td class="py-2"><span class="${actionColor} font-bold">${trade.action}</span></td>
                                 <td class="py-2">${trade.quantity.toFixed(4)}</td>
+                                <td class="py-2 text-sm">${trade.reasoning}</td>
                             </tr>`;
                     });
                 }
+                
+                renderChart(historyData);
+
             } catch (error) {
                 console.error('Error fetching data:', error);
             }
