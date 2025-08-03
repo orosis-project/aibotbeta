@@ -38,6 +38,9 @@
         .orange-dot {
             background-color: #ed8936; /* Orange */
         }
+        .gray-dot {
+            background-color: #718096; /* Gray */
+        }
         .error-message {
             background-color: #c53030;
         }
@@ -280,6 +283,9 @@
                 if (statusData.status === 'paused_apikey') {
                     botStatusElem.textContent = 'Paused (Gemini API Exhausted)';
                     statusDotElem.className = 'inline-block h-4 w-4 rounded-full orange-dot';
+                } else if (statusData.status === 'paused_for_market') {
+                    botStatusElem.textContent = 'Paused (Market Closed)';
+                    statusDotElem.className = 'inline-block h-4 w-4 rounded-full gray-dot';
                 } else {
                     botStatusElem.textContent = statusData.status === 'running' ? 'Running' : 'Paused';
                     statusDotElem.className = `inline-block h-4 w-4 rounded-full ${statusData.status === 'running' ? 'green-dot' : 'red-dot'}`;
