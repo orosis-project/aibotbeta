@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Backtesting, AI learning, optimized API key usage, market hours, and enhanced error handling.
+# Final Version: Fixed API key assignment, optimized schedule, API rate limiting, multi-asset trading, and auto-pause.
 
 import os
 import time
@@ -40,18 +40,18 @@ STOCKS_TO_SCAN_PER_CYCLE = 15
 INITIAL_BUY_COUNT = 10
 FINNHUB_RATE_LIMIT_SECONDS = 2.0
 GEMINI_RATE_LIMIT_SECONDS = 10.0
-MARKET_TIMEZONE = pytz.timezone('America/New_York')
 
 # --- Bot State ---
 bot_status_lock = Lock()
 bot_is_running = True
 all_keys_exhausted = False
-_last_gemini_request_time = 0
+historical_performance = []
 
 # --- AI Configuration ---
 ai_models = {}
 ai_model_lock = Lock()
 ai_model_configured = False
+_last_gemini_request_time = 0
 
 def _enforce_gemini_rate_limit():
     global _last_gemini_request_time
@@ -60,24 +60,25 @@ def _enforce_gemini_rate_limit():
         time.sleep(GEMINI_RATE_LIMIT_SECONDS - elapsed)
     _last_gemini_request_time = time.time()
 
-def get_ai_model(api_key_index):
+
+def get_ai_model(api_key_indices):
+    """Retrieves a configured AI model from a list of indices or falls back to others."""
     if not ai_model_configured:
         configure_ai_models()
         if not ai_model_configured:
             return None
+    
     _enforce_gemini_rate_limit()
 
-    key_order = list(range(len(GEMINI_API_KEYS)))
-    key_order.remove(api_key_index)
-    key_order.insert(0, api_key_index)
-
-    for i in key_order:
+    for i in api_key_indices:
         model_name = f'gemini-1.5-flash-{i}'
         if model_name in ai_models:
             return ai_models[model_name]
+            
     return None
 
 class RiskData:
+    """Predefined risk profiles for different market sectors."""
     SECTOR_RISKS = {
         "Tech": {"risk_level": "High", "description": "High growth, high volatility."},
         "Healthcare": {"risk_level": "Medium", "description": "Stable but can have high-risk biotech plays."},
@@ -89,23 +90,31 @@ class RiskData:
     }
 
 def get_sector_for_symbol(symbol):
-    if symbol.startswith("BINANCE:"): return "Crypto"
-    elif symbol.startswith("OANDA:"): return "Forex"
+    if symbol.startswith("BINANCE:"):
+        return "Crypto"
+    elif symbol.startswith("OANDA:"):
+        return "Forex"
     tech_stocks = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA"]
     healthcare_stocks = ["UNH", "JNJ", "LLY", "ABBV", "PFE"]
     finance_stocks = ["JPM", "V", "MA", "GS", "MS", "AXP", "C", "WFC", "BAC"]
     consumer_staples = ["PG", "KO", "PEP", "WMT", "COST", "MCD"]
     
-    if symbol in tech_stocks: return "Tech"
-    elif symbol in healthcare_stocks: return "Healthcare"
-    elif symbol in finance_stocks: return "Finance"
-    elif symbol in consumer_staples: return "Consumer Staples"
-    else: return "Default"
+    if symbol in tech_stocks:
+        return "Tech"
+    elif symbol in healthcare_stocks:
+        return "Healthcare"
+    elif symbol in finance_stocks:
+        return "Finance"
+    elif symbol in consumer_staples:
+        return "Consumer Staples"
+    else:
+        return "Default"
 
 def configure_ai_models():
     global ai_models, ai_model_configured, all_keys_exhausted
     with ai_model_lock:
-        if ai_model_configured: return
+        if ai_model_configured:
+            return
         
         if not GEMINI_API_KEYS or all(key is None for key in GEMINI_API_KEYS):
             print("ERROR: No Gemini API keys found in environment variables. Bot will not run.")
@@ -485,26 +494,20 @@ class FinnhubClient:
 
 # --- AI Decision Making & Bot Loop ---
 def get_ai_decision_and_analysis(symbol, price, news, portfolio, recent_trades, market_news, trade_count):
-    """
-    Combines AI analysis and decision into a single function to save API calls.
-    Uses GEMINI_API_KEY (index 0) with fallback.
-    """
-    ai_model = get_ai_model(0)
+    ai_model = get_ai_model([0, 1, 2])
     if not ai_model: return None
 
     sector = get_sector_for_symbol(symbol)
     risk_profile = RiskData.SECTOR_RISKS.get(sector, RiskData.SECTOR_RISKS["Default"])
 
     prompt = f"""
-    You are an expert stock and currency trading analyst bot. Your goal is to analyze real-time market data and make a strategic trading decision. The assets you can analyze include stocks, cryptocurrencies, and forex pairs.
+    You are an expert stock and currency trading analyst bot. Your goal is to analyze real-time market data and make a strategic trading decision.
     
     **Instructions for Analysis and Decision:**
-    - First, perform a multi-factor analysis of the asset's potential, including its risk profile, news sentiment, and market position.
-    - Second, based on your analysis, make a final, deliberate BUY, SELL, or HOLD decision.
-    - Your strategy should be to look at the bigger picture and long-term trends. Do not sell at the first sign of minor trouble unless the analysis strongly indicates a fundamental change.
-    - Use the `trade_size_multiplier` to take "SMART risks":
-        - For a stable asset (e.g., in Consumer Staples) with positive analysis, use a higher multiplier.
-        - For a high-risk, high-reward asset (e.g., in Tech or Crypto) with positive analysis, use a carefully chosen moderate multiplier to limit exposure while still capitalizing on potential gains.
+    - Perform a multi-factor analysis of the asset's potential, including its risk profile, news sentiment, and market position.
+    - Based on your analysis, make a final, deliberate BUY, SELL, or HOLD decision.
+    - Your strategy is to look at the bigger picture and long-term trends.
+    - Use the `trade_size_multiplier` to take "SMART risks".
     - Your `reasoning` must clearly justify your decision by referencing the provided data and your strategic outlook.
 
     **Current Information:**
@@ -532,7 +535,6 @@ def get_ai_decision_and_analysis(symbol, price, news, portfolio, recent_trades, 
         response = ai_model.generate_content(prompt)
         decision_text = response.text.strip().replace("```json", "").replace("```", "")
         decision = json.loads(decision_text)
-        print(f"AI Analysis and Decision for {symbol}: {decision}")
         return decision
     except google_exceptions.ResourceExhausted as e:
         print(f"CRITICAL ERROR: Gemini API key limit reached. Falling back.")
@@ -542,9 +544,7 @@ def get_ai_decision_and_analysis(symbol, price, news, portfolio, recent_trades, 
         return None
 
 def get_ai_inquiry(question, portfolio_status, recent_trades):
-    """AI for Admin Panel Inquiry. Uses GEMINI_API_KEY_2 (index 1) with fallback."""
-    
-    ai_model_inquiry = get_ai_model(1)
+    ai_model_inquiry = get_ai_model([5, 6])
     if not ai_model_inquiry: return "Error: AI model for inquiries is not available."
     
     try:
@@ -574,24 +574,13 @@ def get_ai_inquiry(question, portfolio_status, recent_trades):
         return "Error: Failed to get a response from the AI."
 
 def run_backtest(start_date, end_date):
-    """
-    Runs a backtest on a specified date range using dedicated API keys.
-    This simulates the bot's trading loop but uses historical data.
-    """
     print(f"Starting backtest from {start_date} to {end_date}...")
     
-    # Use dedicated backtesting keys
-    ai_model_backtest = get_ai_model(5) # GEMINI_API_KEY_6
+    ai_model_backtest = get_ai_model([3, 4])
     if not ai_model_backtest:
         return {"error": "Backtesting AI models are not configured or exhausted."}
     
     # Placeholder for backtesting logic...
-    # In a real implementation, this would involve:
-    # 1. Fetching historical data for assets.
-    # 2. Simulating the trading loop for each day in the date range.
-    # 3. Using the AI model to make decisions at each step.
-    # 4. Storing the results in a separate database table.
-    
     print("Backtest finished.")
     return {"message": "Backtest ran successfully. Results are available."}
 
@@ -610,13 +599,6 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
         now_et = datetime.now(pytz.timezone('America/New_York'))
         is_market_open = (now_et.weekday() < 5 and now_et.hour >= 9 and now_et.minute >= 30 and (now_et.hour < 16 or (now_et.hour == 16 and now_et.minute == 0)))
 
-        # Pre-market analysis
-        if not is_market_open and now_et.weekday() < 5 and now_et.hour == 9 and now_et.minute == 25:
-             print("Performing pre-market analysis...")
-             market_news = finnhub_client.get_market_news()
-             portfolio = portfolio_manager.get_portfolio_status()
-             get_ai_decision_and_analysis("market", 0, None, portfolio, None, market_news, 0)
-        
         if is_market_open:
             print("\n--- Starting new trading cycle (MARKET OPEN) ---")
             trade_count = len(get_all_trades())
@@ -750,7 +732,6 @@ def scheduler_loop():
                 print("Scheduler: API quotas have reset. Resuming bot.")
                 bot_is_running = True
                 all_keys_exhausted = False
-                # Reset all models to re-enable them
                 configure_ai_models()
 
 # --- Global Instances & App Initialization ---
@@ -855,26 +836,7 @@ def ask_ai():
         portfolio_status = portfolio_manager.get_portfolio_status()
         recent_trades = get_recent_trades(5)
         
-        ai_model_inquiry = get_ai_model(2)
-        if not ai_model_inquiry:
-            return jsonify({"answer": "Error: AI model for inquiries is not available."}), 500
-            
-        prompt = f"""
-        You are an AI stock bot assistant. Your task is to answer questions about the bot's portfolio, trading strategy, and market conditions based on the provided data.
-        
-        **Bot's Current Portfolio:**
-        {json.dumps(portfolio_status, indent=2)}
-        
-        **Bot's Recent Trades:**
-        {json.dumps(recent_trades, indent=2)}
-        
-        **User's Question:**
-        {question}
-        
-        Provide a helpful and concise answer to the user's question.
-        """
-        response = ai_model_inquiry.generate_content(prompt)
-        answer = response.text
+        answer = get_ai_inquiry(question, portfolio_status, recent_trades)
         return jsonify({"answer": answer})
         
     except Exception as e:
