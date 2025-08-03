@@ -69,8 +69,11 @@ def get_ai_model(api_key_index):
     _enforce_gemini_rate_limit()
 
     # Try to use the preferred key, then cycle through others
-    key_order = [api_key_index, (api_key_index + 1) % len(GEMINI_API_KEYS), (api_key_index + 2) % len(GEMINI_API_KEYS)]
-    
+    key_order = list(range(len(GEMINI_API_KEYS)))
+    # Ensure the preferred key is checked first
+    key_order.remove(api_key_index)
+    key_order.insert(0, api_key_index)
+
     for i in key_order:
         model_name = f'gemini-1.5-flash-{i}'
         if model_name in ai_models:
@@ -306,7 +309,8 @@ class PortfolioManager:
                  return historical_data
 
             all_symbols = list(set([trade['symbol'] for trade in all_trades]))
-            current_prices = asyncio.run(self.api_client.get_quotes_async(all_symbols))
+            
+            all_current_prices = asyncio.run(self.api_client.get_quotes_async(all_symbols))
 
             for trade in all_trades:
                 symbol, quantity, price, action = trade['symbol'], trade['quantity'], trade['price'], trade['action']
@@ -324,7 +328,7 @@ class PortfolioManager:
                             
                 current_value = temp_cash
                 for stock_symbol, qty in temp_stocks.items():
-                    current_value += qty * current_prices.get(stock_symbol, 0)
+                    current_value += qty * all_current_prices.get(stock_symbol, 0)
                         
                 historical_data.append({
                     "timestamp": timestamp,
