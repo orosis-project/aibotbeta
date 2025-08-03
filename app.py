@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Optimized schedule for 5 API keys, API rate limiting, multi-asset trading, and auto-pause.
+# Final Version: Fixed reset, optimized schedule, API rate limiting, multi-asset trading, and auto-pause.
 
 import os
 import time
@@ -32,7 +32,6 @@ FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
 INITIAL_CASH = 5000.00
 DB_FILE = "trades.db"
 BASE_TRADE_PERCENTAGE = 0.05
-# FIX: Adjusted to utilize the full quota of 5 API keys
 LOOP_INTERVAL_SECONDS = 172.8
 STOCKS_TO_SCAN_PER_CYCLE = 15
 INITIAL_BUY_COUNT = 10
@@ -244,14 +243,20 @@ class PortfolioManager:
 
     def reset(self):
         with self._lock:
-            if os.path.exists(self.db_file):
-                os.remove(self.db_file)
-            init_db()
-            self.cash = self.initial_cash
-            self.stocks = {}
-            print("Portfolio has been reset.")
-            Thread(target=self.buy_initial_stocks).start()
-            return {"message": "Portfolio reset and initial stock purchase initiated."}
+            try:
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM trades')
+                conn.commit()
+                conn.close()
+                self.cash = self.initial_cash
+                self.stocks = {}
+                print("Portfolio has been reset.")
+                Thread(target=self.buy_initial_stocks).start()
+                return {"message": "Portfolio reset and initial stock purchase initiated."}
+            except Exception as e:
+                print(f"ERROR: Failed to reset portfolio: {e}")
+                return {"message": f"ERROR: Failed to reset portfolio: {e}"}, 500
 
     def buy_initial_stocks(self):
         print("Starting initial stock purchase process...")
@@ -790,7 +795,7 @@ def ask_ai():
         portfolio_status = portfolio_manager.get_portfolio_status()
         recent_trades = get_recent_trades(5)
         
-        ai_model_inquiry = get_ai_model(1)
+        ai_model_inquiry = get_ai_model(2)
         if not ai_model_inquiry:
             return jsonify({"answer": "Error: AI model for inquiries is not available."}), 500
             
