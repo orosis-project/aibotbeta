@@ -343,7 +343,7 @@ class PortfolioManager:
             self.cash -= cost
             if symbol in self.stocks:
                 total_qty = self.stocks[symbol]['quantity'] + quantity
-                self.stocks[symbol]['avg_price'] = ((self.stocks[symbol]['avg_price'] * self.stocks[symbol]['quantity']) + cost) / new_total_quantity
+                self.stocks[symbol]['avg_price'] = ((self.stocks[symbol]['avg_price'] * self.stocks[symbol]['quantity']) + cost) / total_qty
                 self.stocks[symbol]['quantity'] = total_qty
             else:
                 self.stocks[symbol] = {'quantity': quantity, 'avg_price': price}
