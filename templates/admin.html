@@ -336,74 +336,12 @@
 
             } catch (error) {
                 console.error('Error fetching data:', error);
-                botStatusElem.textContent = 'Error';
-                statusDotElem.className = 'inline-block h-4 w-4 rounded-full red-dot';
             }
         };
-
-        const controlBot = async (action) => {
-            try {
-                const res = await fetch(`${API_BASE_URL}/bot/${action}`, { method: 'POST' });
-                if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-                await fetchData();
-            } catch (error) { console.error(`Error controlling bot:`, error); }
-        };
-
-        const resetPortfolio = async () => {
-            if (!confirm("Are you sure you want to reset the entire portfolio? This will delete all trade history and reset cash.")) return;
-            try {
-                const res = await fetch(`${API_BASE_URL}/portfolio/reset`, { method: 'POST' });
-                if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-                await fetchData();
-            } catch (error) { console.error('Error resetting portfolio:', error); }
-        };
-
-        const askAI = async (question) => {
-            const userMessageDiv = document.createElement('div');
-            userMessageDiv.className = 'admin-message rounded-lg p-3 self-end max-w-lg';
-            userMessageDiv.textContent = question;
-            chatHistory.appendChild(userMessageDiv);
-            chatHistory.scrollTop = chatHistory.scrollHeight;
-
-            const loadingDiv = document.createElement('div');
-            loadingDiv.id = 'loading-message';
-            loadingDiv.className = 'ai-message rounded-lg p-3 self-start max-w-lg';
-            loadingDiv.textContent = 'Thinking...';
-            chatHistory.appendChild(loadingDiv);
-            chatHistory.scrollTop = chatHistory.scrollHeight;
-
-            try {
-                const res = await fetch(`${API_BASE_URL}/ask`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ question: question })
-                });
-                if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-                const data = await res.json();
-                loadingDiv.textContent = data.answer;
-            } catch (error) {
-                console.error('Error asking AI:', error);
-                loadingDiv.textContent = 'Error: Could not get a response from the AI.';
-                loadingDiv.classList.add('error-message');
-            }
-            chatHistory.scrollTop = chatHistory.scrollHeight;
-        };
-        
-        startBtn.addEventListener('click', () => controlBot('start'));
-        pauseBtn.addEventListener('click', () => controlBot('pause'));
-        resetBtn.addEventListener('click', () => resetPortfolio());
-        chatForm.addEventListener('submit', (e) => {
-            e.preventDefault();
-            const question = chatInput.value.trim();
-            if (question) {
-                askAI(question);
-                chatInput.value = '';
-            }
-        });
 
         window.onload = () => {
             fetchData();
-            setInterval(fetchData, 2000);
+            setInterval(fetchData, 5000); // Refresh every 5 seconds
         };
     </script>
 </body>
