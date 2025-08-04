@@ -52,6 +52,12 @@ error_logs = []
 backtest_running = False
 last_scheduled_backtest = None
 
+# --- AI Configuration ---
+ai_models = {}
+ai_model_lock = Lock()
+ai_model_configured = False
+_last_gemini_request_time = 0
+
 def _log_error(message):
     timestamp = datetime.now(MARKET_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
     error_logs.insert(0, f"[{timestamp}] {message}")
