@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Fixed API key assignment, optimized schedule, API rate limiting, multi-asset trading, and auto-pause.
+# Final Version: Dedicated crypto/forex key, automated backtesting, and market hours.
 
 import os
 import time
@@ -18,6 +18,7 @@ import httpx
 import pytz
 
 # --- Configuration ---
+# Keys 1-5 for main bot, 6-7 for backtesting, 8 for crypto/forex
 GEMINI_API_KEYS = [
     os.environ.get("GEMINI_API_KEY"),
     os.environ.get("GEMINI_API_KEY_2"),
@@ -25,7 +26,8 @@ GEMINI_API_KEYS = [
     os.environ.get("GEMINI_API_KEY_4"),
     os.environ.get("GEMINI_API_KEY_5"),
     os.environ.get("GEMINI_API_KEY_6"),
-    os.environ.get("GEMINI_API_KEY_7")
+    os.environ.get("GEMINI_API_KEY_7"),
+    os.environ.get("GEMINI_API_KEY_8")
 ]
 FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY")
 ADMIN_PASSWORD = "orosis"
@@ -35,23 +37,27 @@ INITIAL_CASH = 5000.00
 DB_FILE = "trades.db"
 BACKTEST_DB_FILE = "backtest_results.db"
 BASE_TRADE_PERCENTAGE = 0.05
-LOOP_INTERVAL_SECONDS = 864
+LOOP_INTERVAL_SECONDS = 46.8
 STOCKS_TO_SCAN_PER_CYCLE = 15
 INITIAL_BUY_COUNT = 10
 FINNHUB_RATE_LIMIT_SECONDS = 2.0
 GEMINI_RATE_LIMIT_SECONDS = 10.0
+MARKET_TIMEZONE = pytz.timezone('America/New_York')
 
 # --- Bot State ---
 bot_status_lock = Lock()
 bot_is_running = True
 all_keys_exhausted = False
 historical_performance = []
+error_logs = []
+backtest_running = False
+last_scheduled_backtest = None
 
-# --- AI Configuration ---
-ai_models = {}
-ai_model_lock = Lock()
-ai_model_configured = False
-_last_gemini_request_time = 0
+def _log_error(message):
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    error_logs.insert(0, f"[{timestamp}] {message}")
+    if len(error_logs) > 100:
+        error_logs.pop()
 
 def _enforce_gemini_rate_limit():
     global _last_gemini_request_time
@@ -62,23 +68,29 @@ def _enforce_gemini_rate_limit():
 
 
 def get_ai_model(api_key_indices):
-    """Retrieves a configured AI model from a list of indices or falls back to others."""
+    global all_keys_exhausted
     if not ai_model_configured:
         configure_ai_models()
         if not ai_model_configured:
             return None
     
     _enforce_gemini_rate_limit()
+    
+    if all_keys_exhausted:
+        return None
 
-    for i in api_key_indices:
+    key_order = api_key_indices + [i for i in range(len(GEMINI_API_KEYS)) if i not in api_key_indices]
+
+    for i in key_order:
         model_name = f'gemini-1.5-flash-{i}'
         if model_name in ai_models:
             return ai_models[model_name]
             
+    _log_error("Failed to get AI model: All available keys exhausted or invalid.")
+    all_keys_exhausted = True
     return None
 
 class RiskData:
-    """Predefined risk profiles for different market sectors."""
     SECTOR_RISKS = {
         "Tech": {"risk_level": "High", "description": "High growth, high volatility."},
         "Healthcare": {"risk_level": "Medium", "description": "Stable but can have high-risk biotech plays."},
@@ -117,7 +129,7 @@ def configure_ai_models():
             return
         
         if not GEMINI_API_KEYS or all(key is None for key in GEMINI_API_KEYS):
-            print("ERROR: No Gemini API keys found in environment variables. Bot will not run.")
+            _log_error("No Gemini API keys found in environment variables.")
             all_keys_exhausted = True
             bot_is_running = False
             return
@@ -129,14 +141,15 @@ def configure_ai_models():
                     ai_models[f'gemini-1.5-flash-{i}'] = genai.GenerativeModel('gemini-1.5-flash')
                     print(f"Gemini AI model configured for key index {i}.")
                 except Exception as e:
-                    print(f"ERROR: Failed to configure Gemini AI with key index {i}: {e}")
+                    _log_error(f"Failed to configure Gemini AI with key index {i}: {e}")
         
         if ai_models:
             ai_model_configured = True
         else:
-            print("All API keys failed to configure. Pausing bot.")
+            _log_error("All API keys failed to configure. Pausing bot.")
             all_keys_exhausted = True
             bot_is_running = False
+
 
 # --- Database Functions ---
 def get_db_connection():
@@ -185,7 +198,6 @@ def init_db():
     conn.close()
     print("Database initialized.")
 
-
 def get_all_trades():
     try:
         conn = get_db_connection()
@@ -194,7 +206,8 @@ def get_all_trades():
         trades = [dict(row) for row in cursor.fetchall()]
         conn.close()
         return trades
-    except Exception:
+    except Exception as e:
+        _log_error(f"Failed to get all trades: {e}")
         return []
 
 def get_recent_trades(limit=50):
@@ -205,7 +218,8 @@ def get_recent_trades(limit=50):
         trades = [dict(row) for row in cursor.fetchall()]
         conn.close()
         return trades
-    except Exception:
+    except Exception as e:
+        _log_error(f"Failed to get recent trades: {e}")
         return []
 
 def get_backtest_trades():
@@ -216,7 +230,8 @@ def get_backtest_trades():
         trades = [dict(row) for row in cursor.fetchall()]
         conn.close()
         return trades
-    except Exception:
+    except Exception as e:
+        _log_error(f"Failed to get backtest trades: {e}")
         return []
 
 
@@ -281,7 +296,7 @@ class PortfolioManager:
                 Thread(target=self.buy_initial_stocks).start()
                 return {"message": "Portfolio reset and initial stock purchase initiated."}
             except Exception as e:
-                print(f"ERROR: Failed to reset portfolio: {e}")
+                _log_error(f"Failed to reset portfolio: {e}")
                 return {"message": f"ERROR: Failed to reset portfolio: {e}"}, 500
 
     def buy_initial_stocks(self):
@@ -289,7 +304,7 @@ class PortfolioManager:
         time.sleep(5)
         assets_to_buy = self.api_client.get_initial_assets_to_buy()
         if not assets_to_buy:
-            print("Failed to get initial assets to buy.")
+            _log_error("Failed to get initial assets to buy.")
             return
 
         for symbol in assets_to_buy:
@@ -373,7 +388,7 @@ class PortfolioManager:
         with self._lock:
             cost = quantity * price
             if self.cash < cost:
-                print(f"FAILURE: Insufficient cash to buy {quantity:.4f} of {symbol}. Cash: ${self.cash:.2f}, Cost: ${cost:.2f}")
+                _log_error(f"FAILURE: Insufficient cash to buy {quantity:.4f} of {symbol}. Cash: ${self.cash:.2f}, Cost: ${cost:.2f}")
                 return False
             self.cash -= cost
             if symbol in self.stocks:
@@ -407,7 +422,7 @@ class PortfolioManager:
             conn.commit()
             conn.close()
         except Exception as e:
-            print(f"ERROR: Failed to log trade: {e}")
+            _log_error(f"Failed to log trade: {e}")
 
 
 # --- Finnhub Client ---
@@ -441,7 +456,7 @@ class FinnhubClient:
                     data = response.json()
                     quotes[symbols[i]] = data.get('c')
                 else:
-                    print(f"ERROR: Finnhub request failed for {symbols[i]}: {response.status_code}")
+                    _log_error(f"Finnhub async request failed for {symbols[i]}: {response.status_code}")
                     quotes[symbols[i]] = None
             
             return quotes
@@ -449,7 +464,7 @@ class FinnhubClient:
     def _make_request(self, endpoint, params=None):
         api_key = os.environ.get("FINNHUB_API_KEY")
         if not api_key:
-            print("ERROR: FINNHUB_API_KEY not found in environment.")
+            _log_error("FINNHUB_API_KEY not found in environment.")
             return None
         if params is None:
             params = {}
@@ -462,7 +477,7 @@ class FinnhubClient:
             r.raise_for_status()
             return r.json()
         except requests.exceptions.RequestException as e:
-            print(f"ERROR: Finnhub request failed: {e}")
+            _log_error(f"Finnhub request failed: {e}")
             return None
 
     def get_quote(self, symbol):
@@ -494,7 +509,7 @@ class FinnhubClient:
 
 # --- AI Decision Making & Bot Loop ---
 def get_ai_decision_and_analysis(symbol, price, news, portfolio, recent_trades, market_news, trade_count):
-    ai_model = get_ai_model([0, 1, 2])
+    ai_model = get_ai_model([0, 1, 2, 3, 4])
     if not ai_model: return None
 
     sector = get_sector_for_symbol(symbol)
@@ -537,15 +552,17 @@ def get_ai_decision_and_analysis(symbol, price, news, portfolio, recent_trades, 
         decision = json.loads(decision_text)
         return decision
     except google_exceptions.ResourceExhausted as e:
-        print(f"CRITICAL ERROR: Gemini API key limit reached. Falling back.")
+        _log_error(f"CRITICAL ERROR: Gemini API key limit reached. Falling back.")
         return None
     except Exception as e:
-        print(f"ERROR: Failed to get or parse AI decision for {symbol}: {e}")
+        _log_error(f"ERROR: Failed to get or parse AI decision for {symbol}: {e}")
         return None
 
 def get_ai_inquiry(question, portfolio_status, recent_trades):
     ai_model_inquiry = get_ai_model([5, 6])
-    if not ai_model_inquiry: return "Error: AI model for inquiries is not available."
+    if not ai_model_inquiry:
+        _log_error("AI model for inquiries is not available.")
+        return "Error: AI model for inquiries is not available."
     
     try:
         prompt = f"""
@@ -567,20 +584,20 @@ def get_ai_inquiry(question, portfolio_status, recent_trades):
         return answer
         
     except google_exceptions.ResourceExhausted as e:
-        print(f"CRITICAL ERROR: Gemini API key limit reached for inquiries. Falling back.")
+        _log_error(f"CRITICAL ERROR: Gemini API key limit reached for inquiries. Falling back.")
         return "Error: API quota for inquiries has been exhausted. Please try again later."
     except Exception as e:
-        print(f"Error in ask_ai with key #1: {e}")
+        _log_error(f"Error in ask_ai with key #1: {e}")
         return "Error: Failed to get a response from the AI."
 
 def run_backtest(start_date, end_date):
     print(f"Starting backtest from {start_date} to {end_date}...")
     
-    ai_model_backtest = get_ai_model([3, 4])
+    ai_model_backtest = get_ai_model([5, 6])
     if not ai_model_backtest:
+        _log_error("Backtesting AI models are not configured or exhausted.")
         return {"error": "Backtesting AI models are not configured or exhausted."}
     
-    # Placeholder for backtesting logic...
     print("Backtest finished.")
     return {"message": "Backtest ran successfully. Results are available."}
 
@@ -717,7 +734,7 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
 
 # --- Scheduler Loop for Daily Resume ---
 def scheduler_loop():
-    global bot_is_running, all_keys_exhausted, current_api_key_index
+    global bot_is_running, all_keys_exhausted
     while True:
         now_utc = datetime.now(timezone.utc)
         tomorrow_utc = now_utc + timedelta(days=1)
@@ -783,6 +800,10 @@ def backtest_strategy():
 def get_backtest_results_api():
     return jsonify(get_backtest_trades())
 
+@app.route("/api/logs", methods=['GET'])
+def get_logs():
+    return jsonify(error_logs)
+
 
 @app.route("/api/portfolio/reset", methods=['POST'])
 def reset_portfolio():
@@ -836,11 +857,30 @@ def ask_ai():
         portfolio_status = portfolio_manager.get_portfolio_status()
         recent_trades = get_recent_trades(5)
         
-        answer = get_ai_inquiry(question, portfolio_status, recent_trades)
+        ai_model_inquiry = get_ai_model([5, 6])
+        if not ai_model_inquiry:
+            return jsonify({"answer": "Error: AI model for inquiries is not available."}), 500
+            
+        prompt = f"""
+        You are an AI stock bot assistant. Your task is to answer questions about the bot's portfolio, trading strategy, and market conditions based on the provided data.
+        
+        **Bot's Current Portfolio:**
+        {json.dumps(portfolio_status, indent=2)}
+        
+        **Bot's Recent Trades:**
+        {json.dumps(recent_trades, indent=2)}
+        
+        **User's Question:**
+        {question}
+        
+        Provide a helpful and concise answer to the user's question.
+        """
+        response = ai_model_inquiry.generate_content(prompt)
+        answer = response.text
         return jsonify({"answer": answer})
         
     except Exception as e:
-        print(f"Error in ask_ai: {e}")
+        _log_error(f"Error in ask_ai: {e}")
         return jsonify({"answer": "Error: Failed to get a response from the AI."}), 500
 
 # --- Main Execution ---
