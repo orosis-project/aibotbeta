@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Bug-free, optimized schedule, API key management, and robust error handling.
+# Final Version: Backtesting, AI learning, optimized API key usage, market hours, and enhanced error handling.
 
 import os
 import time
@@ -51,6 +51,12 @@ historical_performance = []
 error_logs = []
 backtest_running = False
 last_scheduled_backtest = None
+
+# --- AI Configuration ---
+ai_models = {}
+ai_model_lock = Lock()
+ai_model_configured = False
+_last_gemini_request_time = 0
 
 def _log_error(message):
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -581,11 +587,8 @@ def get_ai_inquiry(question, portfolio_status, recent_trades):
         answer = response.text
         return answer
         
-    except google_exceptions.ResourceExhausted as e:
-        _log_error(f"CRITICAL ERROR: Gemini API key limit reached for inquiries. Falling back.")
-        return "Error: API quota for inquiries has been exhausted. Please try again later."
     except Exception as e:
-        _log_error(f"Error in ask_ai with key #1: {e}")
+        _log_error(f"Error in ask_ai: {e}")
         return "Error: Failed to get a response from the AI."
 
 def run_backtest(start_date, end_date):
@@ -871,7 +874,7 @@ def ask_ai():
         **User's Question:**
         {question}
         
-        Provide a helpful and concise answer to the user's question.
+        Provide a helpful and concise answer to the user's question in Markdown format.
         """
         response = ai_model_inquiry.generate_content(prompt)
         answer = response.text
