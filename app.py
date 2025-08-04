@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Fixed Finnhub rate limiting, optimized schedule, API key management, and robust error handling.
+# Final Version: Fixed NameError, optimized schedule, API rate limiting, multi-asset trading, and auto-pause.
 
 import os
 import time
@@ -40,8 +40,7 @@ BASE_TRADE_PERCENTAGE = 0.05
 LOOP_INTERVAL_SECONDS = 46.8
 STOCKS_TO_SCAN_PER_CYCLE = 15
 INITIAL_BUY_COUNT = 10
-# FIX: Increased Finnhub rate limit delay to 3 seconds for stability
-FINNHUB_RATE_LIMIT_SECONDS = 3.0
+FINNHUB_RATE_LIMIT_SECONDS = 2.0
 GEMINI_RATE_LIMIT_SECONDS = 10.0
 MARKET_TIMEZONE = pytz.timezone('America/New_York')
 
@@ -61,7 +60,7 @@ ai_model_configured = False
 _last_gemini_request_time = 0
 
 def _log_error(message):
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    timestamp = datetime.now(MARKET_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
     error_logs.insert(0, f"[{timestamp}] {message}")
     if len(error_logs) > 100:
         error_logs.pop()
