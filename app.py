@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Fixed NameError, optimized schedule, API rate limiting, multi-asset trading, and auto-pause.
+# Final Version: Fixed AI chat, API rate limiting, instant AI activation, multi-asset trading, dynamic trade sizing, and auto-pause.
 
 import os
 import time
@@ -128,7 +128,7 @@ def get_sector_for_symbol(symbol):
         return "Default"
 
 def configure_ai_models():
-    global ai_models, ai_model_configured, all_keys_exhausted
+    global ai_models, ai_model_configured, all_keys_exhausted, ai_model_lock
     with ai_model_lock:
         if ai_model_configured:
             return
