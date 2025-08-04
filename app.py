@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Fixed AI chat, API rate limiting, instant AI activation, multi-asset trading, dynamic trade sizing, and auto-pause.
+# Final Version: Fixed NameError, optimized schedule, API rate limiting, multi-asset trading, and auto-pause.
 
 import os
 import time
@@ -42,7 +42,6 @@ STOCKS_TO_SCAN_PER_CYCLE = 15
 INITIAL_BUY_COUNT = 10
 FINNHUB_RATE_LIMIT_SECONDS = 2.0
 GEMINI_RATE_LIMIT_SECONDS = 10.0
-MARKET_TIMEZONE = pytz.timezone('America/New_York')
 
 # --- Bot State ---
 bot_status_lock = Lock()
@@ -52,6 +51,12 @@ historical_performance = []
 error_logs = []
 backtest_running = False
 last_scheduled_backtest = None
+
+# --- AI Configuration ---
+ai_models = {}
+ai_model_lock = Lock()
+ai_model_configured = False
+_last_gemini_request_time = 0
 
 def _log_error(message):
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -131,7 +136,6 @@ def configure_ai_models():
         if not GEMINI_API_KEYS or all(key is None for key in GEMINI_API_KEYS):
             _log_error("No Gemini API keys found in environment variables.")
             all_keys_exhausted = True
-            bot_is_running = False
             return
             
         for i, api_key in enumerate(GEMINI_API_KEYS):
