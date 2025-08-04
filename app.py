@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Fixed market hours, optimized schedule, API rate limiting, multi-asset trading, and auto-pause.
+# Final Version: Bug-free, optimized schedule, API key management, and robust error handling.
 
 import os
 import time
@@ -26,8 +26,7 @@ GEMINI_API_KEYS = [
     os.environ.get("GEMINI_API_KEY_4"),
     os.environ.get("GEMINI_API_KEY_5"),
     os.environ.get("GEMINI_API_KEY_6"),
-    os.environ.get("GEMINI_API_KEY_7"),
-    os.environ.get("GEMINI_API_KEY_8")
+    os.environ.get("GEMINI_API_KEY_7")
 ]
 FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY")
 ADMIN_PASSWORD = "orosis"
