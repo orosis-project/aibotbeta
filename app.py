@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Fixed NameError, optimized schedule, API rate limiting, multi-asset trading, and auto-pause.
+# Final Version: Backtesting, AI learning, optimized API key usage, market hours, and enhanced error handling.
 
 import os
 import time
@@ -26,8 +26,7 @@ GEMINI_API_KEYS = [
     os.environ.get("GEMINI_API_KEY_4"),
     os.environ.get("GEMINI_API_KEY_5"),
     os.environ.get("GEMINI_API_KEY_6"),
-    os.environ.get("GEMINI_API_KEY_7"),
-    os.environ.get("GEMINI_API_KEY_8")
+    os.environ.get("GEMINI_API_KEY_7")
 ]
 FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY")
 ADMIN_PASSWORD = "orosis"
@@ -42,6 +41,7 @@ STOCKS_TO_SCAN_PER_CYCLE = 15
 INITIAL_BUY_COUNT = 10
 FINNHUB_RATE_LIMIT_SECONDS = 2.0
 GEMINI_RATE_LIMIT_SECONDS = 10.0
+MARKET_TIMEZONE = pytz.timezone('America/New_York')
 
 # --- Bot State ---
 bot_status_lock = Lock()
@@ -51,12 +51,6 @@ historical_performance = []
 error_logs = []
 backtest_running = False
 last_scheduled_backtest = None
-
-# --- AI Configuration ---
-ai_models = {}
-ai_model_lock = Lock()
-ai_model_configured = False
-_last_gemini_request_time = 0
 
 def _log_error(message):
     timestamp = datetime.now(MARKET_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
