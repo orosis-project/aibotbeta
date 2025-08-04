@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Backtesting, AI learning, optimized API key usage, market hours, and enhanced error handling.
+# Final Version: Fixed Finnhub rate limiting, optimized schedule, API key management, and robust error handling.
 
 import os
 import time
@@ -26,7 +26,8 @@ GEMINI_API_KEYS = [
     os.environ.get("GEMINI_API_KEY_4"),
     os.environ.get("GEMINI_API_KEY_5"),
     os.environ.get("GEMINI_API_KEY_6"),
-    os.environ.get("GEMINI_API_KEY_7")
+    os.environ.get("GEMINI_API_KEY_7"),
+    os.environ.get("GEMINI_API_KEY_8")
 ]
 FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY")
 ADMIN_PASSWORD = "orosis"
@@ -39,7 +40,8 @@ BASE_TRADE_PERCENTAGE = 0.05
 LOOP_INTERVAL_SECONDS = 46.8
 STOCKS_TO_SCAN_PER_CYCLE = 15
 INITIAL_BUY_COUNT = 10
-FINNHUB_RATE_LIMIT_SECONDS = 2.0
+# FIX: Increased Finnhub rate limit delay to 3 seconds for stability
+FINNHUB_RATE_LIMIT_SECONDS = 3.0
 GEMINI_RATE_LIMIT_SECONDS = 10.0
 MARKET_TIMEZONE = pytz.timezone('America/New_York')
 
@@ -581,7 +583,7 @@ def get_ai_inquiry(question, portfolio_status, recent_trades):
         **User's Question:**
         {question}
         
-        Provide a helpful and concise answer to the user's question.
+        Provide a helpful and concise answer to the user's question in Markdown format.
         """
         response = ai_model_inquiry.generate_content(prompt)
         answer = response.text
