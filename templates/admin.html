@@ -177,9 +177,21 @@
                 </div>
             </div>
         </div>
+        
+        <hr class="border-gray-700 my-8">
+
+        <!-- Recent Errors -->
+        <div class="section-card rounded-xl shadow-lg p-6 mb-8">
+            <h2 class="text-2xl font-semibold mb-4 text-red-400">Recent Errors</h2>
+            <div class="scrollable-content bg-gray-800 p-4 rounded-lg">
+                <ul id="error-logs" class="text-sm font-mono text-gray-300 space-y-2">
+                    <li>No errors logged yet.</li>
+                </ul>
+            </div>
+        </div>
 
         <hr class="border-gray-700 mb-8">
-        
+
         <!-- AI Chat Interface -->
         <div class="section-card rounded-xl shadow-lg p-6">
             <h2 class="text-2xl font-semibold mb-4 text-teal-300">Ask the Bot</h2>
@@ -214,11 +226,10 @@
         const chatForm = document.getElementById('ai-chat-form');
         const chatInput = document.getElementById('ai-chat-input');
         const chatHistory = document.getElementById('chat-history');
-        const learningStatusText = document.getElementById('learning-status-text');
-        const learningProgress = document.getElementById('learning-progress');
         const backtestForm = document.getElementById('backtest-form');
         const runBacktestBtn = document.getElementById('run-backtest-btn');
         const backtestResultsDiv = document.getElementById('backtest-results');
+        const errorLogsList = document.getElementById('error-logs');
 
         const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
         const formatDate = (dateString) => new Date(dateString).toLocaleString();
@@ -278,14 +289,15 @@
 
         const fetchData = async () => {
             try {
-                const [statusRes, portfolioRes, tradesRes, historyRes] = await Promise.all([
+                const [statusRes, portfolioRes, tradesRes, historyRes, logsRes] = await Promise.all([
                     fetch(`${API_BASE_URL}/bot/status`),
                     fetch(`${API_BASE_URL}/portfolio`),
                     fetch(`${API_BASE_URL}/trades`),
-                    fetch(`${API_BASE_URL}/portfolio/history`)
+                    fetch(`${API_BASE_URL}/portfolio/history`),
+                    fetch(`${API_BASE_URL}/logs`)
                 ]);
 
-                if (!statusRes.ok || !portfolioRes.ok || !tradesRes.ok || !historyRes.ok) {
+                if (!statusRes.ok || !portfolioRes.ok || !tradesRes.ok || !historyRes.ok || !logsRes.ok) {
                     throw new Error('One or more API endpoints failed.');
                 }
 
@@ -293,8 +305,8 @@
                 const portfolioData = await portfolioRes.json();
                 const tradesData = await tradesRes.json();
                 const historyData = await historyRes.json();
+                const logsData = await logsRes.json();
 
-                // Update Bot Status
                 if (statusData.status === 'paused_apikey') {
                     botStatusElem.textContent = 'Paused (Gemini API Exhausted)';
                     statusDotElem.className = 'inline-block h-4 w-4 rounded-full orange-dot';
@@ -306,13 +318,11 @@
                     statusDotElem.className = `inline-block h-4 w-4 rounded-full ${statusData.status === 'running' ? 'green-dot' : 'red-dot'}`;
                 }
 
-                // Update Portfolio Summary
                 cashBalanceElem.textContent = formatCurrency(portfolioData.cash);
                 totalValueElem.textContent = formatCurrency(portfolioData.total_portfolio_value);
                 profitLossElem.textContent = formatCurrency(portfolioData.profit_loss);
                 profitLossElem.style.color = portfolioData.profit_loss >= 0 ? '#48bb78' : '#f56565';
 
-                // Update Owned Assets
                 ownedAssetsBodyElem.innerHTML = '';
                 const ownedAssets = portfolioData.owned_stocks;
                 if (Object.keys(ownedAssets).length === 0) {
@@ -330,11 +340,6 @@
                     }
                 }
 
-                // Update Recent Trades & Learning Status
-                learningStatusText.textContent = `AI is running at full capacity.`;
-                learningProgress.style.width = `100%`;
-                learningProgress.className = `bg-cyan-400 h-2.5 rounded-full transition-all duration-500 ease-in-out`;
-                
                 recentTradesBodyElem.innerHTML = '';
                 if (tradesData.length === 0) {
                     recentTradesBodyElem.innerHTML = `<tr><td colspan="5" class="text-center py-4 text-gray-500">No trades made yet.</td></tr>`;
@@ -349,6 +354,15 @@
                                 <td class="py-2">${trade.quantity.toFixed(4)}</td>
                                 <td class="py-2 text-sm">${trade.reasoning}</td>
                             </tr>`;
+                    });
+                }
+
+                errorLogsList.innerHTML = '';
+                if (logsData.length === 0) {
+                    errorLogsList.innerHTML = `<li>No errors logged yet.</li>`;
+                } else {
+                    logsData.forEach(log => {
+                        errorLogsList.innerHTML += `<li>${log}</li>`;
                     });
                 }
 
@@ -435,12 +449,10 @@
                 const result = await res.json();
                 document.getElementById('backtest-summary').textContent = result.message;
 
-                // Optionally, fetch and display backtest trades
                 const backtestTradesRes = await fetch(`${API_BASE_URL}/backtest/results`);
                 if (backtestTradesRes.ok) {
                     const backtestTrades = await backtestTradesRes.json();
                     console.log("Backtest trades:", backtestTrades);
-                    // You could add a new table here to display these results
                 }
 
             } catch (error) {
