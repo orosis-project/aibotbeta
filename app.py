@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Backtesting, AI learning, optimized API key usage, market hours, and enhanced error handling.
+# Final Version: Robust error handling, backtesting, optimized schedule, and multi-asset trading.
 
 import os
 import time
@@ -39,7 +39,8 @@ BASE_TRADE_PERCENTAGE = 0.05
 LOOP_INTERVAL_SECONDS = 46.8
 STOCKS_TO_SCAN_PER_CYCLE = 15
 INITIAL_BUY_COUNT = 10
-FINNHUB_RATE_LIMIT_SECONDS = 2.0
+# FIX: Increased Finnhub rate limit delay to 3 seconds for stability
+FINNHUB_RATE_LIMIT_SECONDS = 3.0
 GEMINI_RATE_LIMIT_SECONDS = 10.0
 MARKET_TIMEZONE = pytz.timezone('America/New_York')
 
@@ -49,20 +50,25 @@ bot_is_running = True
 all_keys_exhausted = False
 historical_performance = []
 error_logs = []
+ai_logs = []
+action_logs = []
 backtest_running = False
 last_scheduled_backtest = None
 
-# --- AI Configuration ---
-ai_models = {}
-ai_model_lock = Lock()
-ai_model_configured = False
-_last_gemini_request_time = 0
-
-def _log_error(message):
+def _log_message(log_type, message):
     timestamp = datetime.now(MARKET_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
-    error_logs.insert(0, f"[{timestamp}] {message}")
-    if len(error_logs) > 100:
-        error_logs.pop()
+    log_entry = f"[{timestamp}] {message}"
+    if log_type == 'error':
+        error_logs.insert(0, log_entry)
+        if len(error_logs) > 100: error_logs.pop()
+    elif log_type == 'ai':
+        ai_logs.insert(0, log_entry)
+        if len(ai_logs) > 100: ai_logs.pop()
+    elif log_type == 'action':
+        action_logs.insert(0, log_entry)
+        if len(action_logs) > 100: action_logs.pop()
+    print(log_entry)
+
 
 def _enforce_gemini_rate_limit():
     global _last_gemini_request_time
@@ -91,7 +97,7 @@ def get_ai_model(api_key_indices):
         if model_name in ai_models:
             return ai_models[model_name]
             
-    _log_error("Failed to get AI model: All available keys exhausted or invalid.")
+    _log_message('error', "Failed to get AI model: All available keys exhausted or invalid.")
     all_keys_exhausted = True
     return None
 
@@ -134,7 +140,7 @@ def configure_ai_models():
             return
         
         if not GEMINI_API_KEYS or all(key is None for key in GEMINI_API_KEYS):
-            _log_error("No Gemini API keys found in environment variables.")
+            _log_message('error', "No Gemini API keys found in environment variables.")
             all_keys_exhausted = True
             return
             
@@ -145,12 +151,12 @@ def configure_ai_models():
                     ai_models[f'gemini-1.5-flash-{i}'] = genai.GenerativeModel('gemini-1.5-flash')
                     print(f"Gemini AI model configured for key index {i}.")
                 except Exception as e:
-                    _log_error(f"Failed to configure Gemini AI with key index {i}: {e}")
+                    _log_message('error', f"Failed to configure Gemini AI with key index {i}: {e}")
         
         if ai_models:
             ai_model_configured = True
         else:
-            _log_error("All API keys failed to configure. Pausing bot.")
+            _log_message('error', "All API keys failed to configure. Pausing bot.")
             all_keys_exhausted = True
             bot_is_running = False
 
@@ -211,7 +217,7 @@ def get_all_trades():
         conn.close()
         return trades
     except Exception as e:
-        _log_error(f"Failed to get all trades: {e}")
+        _log_message('error', f"Failed to get all trades: {e}")
         return []
 
 def get_recent_trades(limit=50):
@@ -223,7 +229,7 @@ def get_recent_trades(limit=50):
         conn.close()
         return trades
     except Exception as e:
-        _log_error(f"Failed to get recent trades: {e}")
+        _log_message('error', f"Failed to get recent trades: {e}")
         return []
 
 def get_backtest_trades():
@@ -235,7 +241,7 @@ def get_backtest_trades():
         conn.close()
         return trades
     except Exception as e:
-        _log_error(f"Failed to get backtest trades: {e}")
+        _log_message('error', f"Failed to get backtest trades: {e}")
         return []
 
 
@@ -255,9 +261,9 @@ class PortfolioManager:
         self.stocks = {}
         self.initial_value = initial_cash
         self._reconstruct_portfolio_from_db()
-        print("Portfolio Manager initialized.")
+        _log_message('action', "Portfolio Manager initialized.")
         if not get_all_trades():
-            print("No trades found. Initiating initial stock purchase.")
+            _log_message('action', "No trades found. Initiating initial stock purchase.")
             Thread(target=self.buy_initial_stocks).start()
 
     def _reconstruct_portfolio_from_db(self):
@@ -284,7 +290,7 @@ class PortfolioManager:
                         self.stocks[symbol]['quantity'] -= quantity
                         if self.stocks[symbol]['quantity'] < 1e-6:
                             del self.stocks[symbol]
-            print(f"Reconstruction complete. Cash: {self.cash:.2f}")
+            _log_message('action', f"Reconstruction complete. Cash: {self.cash:.2f}")
 
     def reset(self):
         with self._lock:
@@ -296,11 +302,11 @@ class PortfolioManager:
                 conn.close()
                 self.cash = self.initial_cash
                 self.stocks = {}
-                print("Portfolio has been reset.")
+                _log_message('action', "Portfolio has been reset.")
                 Thread(target=self.buy_initial_stocks).start()
                 return {"message": "Portfolio reset and initial stock purchase initiated."}
             except Exception as e:
-                _log_error(f"Failed to reset portfolio: {e}")
+                _log_message('error', f"Failed to reset portfolio: {e}")
                 return {"message": f"ERROR: Failed to reset portfolio: {e}"}, 500
 
     def buy_initial_stocks(self):
@@ -402,7 +408,7 @@ class PortfolioManager:
             else:
                 self.stocks[symbol] = {'quantity': quantity, 'avg_price': price}
             self._log_trade(symbol, 'BUY', quantity, price, reasoning, confidence)
-            print(f"SUCCESS: Bought {quantity:.4f} of {symbol} @ ${price:.2f}")
+            _log_message('action', f"SUCCESS: Bought {quantity:.4f} of {symbol} @ ${price:.2f}")
             return True
 
     def sell_stock(self, symbol, quantity, price, reasoning, confidence):
@@ -414,7 +420,7 @@ class PortfolioManager:
             if self.stocks[symbol]['quantity'] < 1e-6:
                 del self.stocks[symbol]
             self._log_trade(symbol, 'SELL', quantity, price, reasoning, confidence)
-            print(f"SUCCESS: Sold {quantity:.4f} of {symbol} @ ${price:.2f}")
+            _log_message('action', f"SUCCESS: Sold {quantity:.4f} of {symbol} @ ${price:.2f}")
             return True
 
     def _log_trade(self, symbol, action, quantity, price, reasoning, confidence):
@@ -426,7 +432,7 @@ class PortfolioManager:
             conn.commit()
             conn.close()
         except Exception as e:
-            _log_error(f"Failed to log trade: {e}")
+            _log_message('error', f"Failed to log trade: {e}")
 
 
 # --- Finnhub Client ---
@@ -436,13 +442,15 @@ class FinnhubClient:
         self.crypto_pairs = ["BINANCE:BTCUSDT", "BINANCE:ETHUSDT", "BINANCE:XRPUSDT", "BINANCE:DOGEUSDT"]
         self.forex_pairs = ["OANDA:EURUSD", "OANDA:GBPUSD", "OANDA:USDJPY", "OANDA:USDCAD"]
         self._last_request_time = 0
+        self.finnhub_lock = Lock()
         print("Finnhub Client initialized.")
 
     def _enforce_rate_limit(self):
-        elapsed = time.time() - self._last_request_time
-        if elapsed < FINNHUB_RATE_LIMIT_SECONDS:
-            time.sleep(FINNHUB_RATE_LIMIT_SECONDS - elapsed)
-        self._last_request_time = time.time()
+        with self.finnhub_lock:
+            elapsed = time.time() - self._last_request_time
+            if elapsed < FINNHUB_RATE_LIMIT_SECONDS:
+                time.sleep(FINNHUB_RATE_LIMIT_SECONDS - elapsed)
+            self._last_request_time = time.time()
 
     async def get_quotes_async(self, symbols):
         self._enforce_rate_limit()
@@ -460,7 +468,7 @@ class FinnhubClient:
                     data = response.json()
                     quotes[symbols[i]] = data.get('c')
                 else:
-                    _log_error(f"Finnhub async request failed for {symbols[i]}: {response.status_code}")
+                    _log_message('error', f"Finnhub async request failed for {symbols[i]}: {response.status_code}")
                     quotes[symbols[i]] = None
             
             return quotes
@@ -468,7 +476,7 @@ class FinnhubClient:
     def _make_request(self, endpoint, params=None):
         api_key = os.environ.get("FINNHUB_API_KEY")
         if not api_key:
-            _log_error("FINNHUB_API_KEY not found in environment.")
+            _log_message('error', "FINNHUB_API_KEY not found in environment.")
             return None
         if params is None:
             params = {}
@@ -481,7 +489,7 @@ class FinnhubClient:
             r.raise_for_status()
             return r.json()
         except requests.exceptions.RequestException as e:
-            _log_error(f"Finnhub request failed: {e}")
+            _log_message('error', f"Finnhub request failed: {e}")
             return None
 
     def get_quote(self, symbol):
@@ -556,16 +564,16 @@ def get_ai_decision_and_analysis(symbol, price, news, portfolio, recent_trades, 
         decision = json.loads(decision_text)
         return decision
     except google_exceptions.ResourceExhausted as e:
-        _log_error(f"CRITICAL ERROR: Gemini API key limit reached. Falling back.")
+        _log_message('error', f"CRITICAL ERROR: Gemini API key limit reached. Falling back.")
         return None
     except Exception as e:
-        _log_error(f"ERROR: Failed to get or parse AI decision for {symbol}: {e}")
+        _log_message('error', f"ERROR: Failed to get or parse AI decision for {symbol}: {e}")
         return None
 
 def get_ai_inquiry(question, portfolio_status, recent_trades):
     ai_model_inquiry = get_ai_model([5, 6])
     if not ai_model_inquiry:
-        _log_error("AI model for inquiries is not available.")
+        _log_message('error', "AI model for inquiries is not available.")
         return "Error: AI model for inquiries is not available."
     
     try:
@@ -588,29 +596,29 @@ def get_ai_inquiry(question, portfolio_status, recent_trades):
         return answer
         
     except Exception as e:
-        _log_error(f"Error in ask_ai: {e}")
+        _log_message('error', f"Error in ask_ai: {e}")
         return "Error: Failed to get a response from the AI."
 
 def run_backtest(start_date, end_date):
-    print(f"Starting backtest from {start_date} to {end_date}...")
+    _log_message('action', f"Starting backtest from {start_date} to {end_date}...")
     
     ai_model_backtest = get_ai_model([5, 6])
     if not ai_model_backtest:
-        _log_error("Backtesting AI models are not configured or exhausted.")
+        _log_message('error', "Backtesting AI models are not configured or exhausted.")
         return {"error": "Backtesting AI models are not configured or exhausted."}
     
     print("Backtest finished.")
     return {"message": "Backtest ran successfully. Results are available."}
 
 def bot_trading_loop(portfolio_manager, finnhub_client):
-    print("Bot trading loop started.")
+    _log_message('action', "Bot trading loop started.")
     while True:
         with bot_status_lock:
             is_running = bot_is_running
 
         if not is_running:
             status_reason = "all API keys exhausted" if all_keys_exhausted else "manually paused"
-            print(f"Bot is {status_reason}. Skipping trading cycle.")
+            _log_message('action', f"Bot is {status_reason}. Skipping trading cycle.")
             time.sleep(30)
             continue
         
@@ -618,9 +626,9 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
         is_market_open = (now_et.weekday() < 5 and now_et.hour >= 9 and now_et.minute >= 30 and (now_et.hour < 16 or (now_et.hour == 16 and now_et.minute == 0)))
 
         if is_market_open:
-            print("\n--- Starting new trading cycle (MARKET OPEN) ---")
+            _log_message('action', "\n--- Starting new trading cycle (MARKET OPEN) ---")
             trade_count = len(get_all_trades())
-            confidence_threshold = 0.65 
+            confidence_threshold = 0.55 
 
             print(f"Current trade count: {trade_count}. Confidence threshold set to {confidence_threshold * 100}%.")
 
@@ -628,15 +636,14 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
             owned_assets = list(portfolio['owned_stocks'].keys())
             market_news = finnhub_client.get_market_news()
             assets_to_analyze = finnhub_client.get_assets_to_analyze(owned_assets)
-            print(f"This cycle, analyzing: {assets_to_analyze}")
-            print("Starting AI decision-making for this cycle.")
+            _log_message('action', f"This cycle, analyzing: {assets_to_analyze}")
 
             for symbol in assets_to_analyze:
                 with bot_status_lock:
                     if not bot_is_running:
                         break
 
-                print(f"Analyzing {symbol}...")
+                _log_message('action', f"Analyzing {symbol}...")
                 price = finnhub_client.get_quote(symbol)
                 if not price:
                     continue
@@ -666,28 +673,28 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
                             if quantity_to_sell > 0:
                                 portfolio_manager.sell_stock(symbol, quantity_to_sell, price, reasoning, confidence)
         
-            print(f"--- Cycle finished. Waiting {LOOP_INTERVAL_SECONDS}s. ---")
+            _log_message('action', f"--- Cycle finished. Waiting {LOOP_INTERVAL_SECONDS}s. ---")
             time.sleep(LOOP_INTERVAL_SECONDS)
         
         elif not is_market_open and now_et.weekday() < 5 and now_et.hour < 9: # Pre-market analysis
-            print("Performing pre-market analysis...")
+            _log_message('action', "Performing pre-market analysis...")
             market_news = finnhub_client.get_market_news()
             portfolio = portfolio_manager.get_portfolio_status()
             get_ai_decision_and_analysis("market", 0, None, portfolio, None, market_news, 0)
         
         elif not is_market_open and now_et.weekday() < 5 and now_et.hour >= 16 and now_et.minute >= 5: # Post-market analysis
-            print("Performing post-market analysis...")
+            _log_message('action', "Performing post-market analysis...")
             market_news = finnhub_client.get_market_news()
             portfolio = portfolio_manager.get_portfolio_status()
             get_ai_decision_and_analysis("market", 0, None, portfolio, None, market_news, 0)
 
         elif now_et.weekday() >= 5: # Weekend Trading for crypto and forex
-            print("\n--- Starting new trading cycle (WEEKEND) ---")
+            _log_message('action', "\n--- Starting new trading cycle (WEEKEND) ---")
             portfolio = portfolio_manager.get_portfolio_status()
             owned_assets = list(portfolio['owned_stocks'].keys())
             crypto_forex_assets = [a for a in owned_assets if a.startswith("BINANCE:") or a.startswith("OANDA:")]
             if not crypto_forex_assets:
-                print("No crypto or forex assets to analyze. Sleeping...")
+                _log_message('action', "No crypto or forex assets to analyze. Sleeping...")
                 time.sleep(300)
                 continue
             
@@ -696,7 +703,7 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
                     if not bot_is_running:
                         break
                 
-                print(f"Analyzing {symbol}...")
+                _log_message('action', f"Analyzing {symbol}...")
                 price = finnhub_client.get_quote(symbol)
                 if not price:
                     continue
@@ -725,11 +732,11 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
                             if quantity_to_sell > 0:
                                 portfolio_manager.sell_stock(symbol, quantity_to_sell, price, reasoning, confidence)
                 
-            print(f"--- Weekend cycle finished. Waiting {LOOP_INTERVAL_SECONDS}s. ---")
+            _log_message('action', f"--- Weekend cycle finished. Waiting {LOOP_INTERVAL_SECONDS}s. ---")
             time.sleep(LOOP_INTERVAL_SECONDS)
         
         else:
-            print("Market is closed. Bot is idle.")
+            _log_message('action', "Market is closed. Bot is idle.")
             time.sleep(60)
 
 
@@ -742,12 +749,12 @@ def scheduler_loop():
         midnight_utc = tomorrow_utc.replace(hour=0, minute=1, second=0, microsecond=0)
         sleep_seconds = (midnight_utc - now_utc).total_seconds()
         
-        print(f"Scheduler: Sleeping for {sleep_seconds / 3600:.2f} hours until quota reset.")
+        _log_message('action', f"Scheduler: Sleeping for {sleep_seconds / 3600:.2f} hours until quota reset.")
         time.sleep(sleep_seconds)
 
         with bot_status_lock:
             if all_keys_exhausted:
-                print("Scheduler: API quotas have reset. Resuming bot.")
+                _log_message('action', "Scheduler: API quotas have reset. Resuming bot.")
                 bot_is_running = True
                 all_keys_exhausted = False
                 configure_ai_models()
@@ -801,10 +808,17 @@ def backtest_strategy():
 def get_backtest_results_api():
     return jsonify(get_backtest_trades())
 
-@app.route("/api/logs", methods=['GET'])
-def get_logs():
-    return jsonify(error_logs)
+@app.route("/api/logs/ai", methods=['GET'])
+def get_ai_logs():
+    return jsonify(ai_logs)
 
+@app.route("/api/logs/actions", methods=['GET'])
+def get_action_logs():
+    return jsonify(action_logs)
+
+@app.route("/api/logs/errors", methods=['GET'])
+def get_error_logs():
+    return jsonify(error_logs)
 
 @app.route("/api/portfolio/reset", methods=['POST'])
 def reset_portfolio():
@@ -858,7 +872,7 @@ def ask_ai():
         portfolio_status = portfolio_manager.get_portfolio_status()
         recent_trades = get_recent_trades(5)
         
-        ai_model_inquiry = get_ai_model([5, 6])
+        ai_model_inquiry = get_ai_model([6, 5])
         if not ai_model_inquiry:
             return jsonify({"answer": "Error: AI model for inquiries is not available."}), 500
             
