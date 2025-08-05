@@ -1,0 +1,20 @@
+{
+    "name": "AI Stock Bot",
+    "short_name": "AI Bot",
+    "start_url": "/view",
+    "display": "standalone",
+    "background_color": "#1a202c",
+    "theme_color": "#2dd4bf",
+    "icons": [
+        {
+            "src": "https://storage.googleapis.com/gcp-private-content/orosis-project/aibotbeta/aibotbeta-15b1b262bba595bd1b57ddf2135b309085450678/IMG_1466.jpeg",
+            "sizes": "192x192",
+            "type": "image/jpeg"
+        },
+        {
+            "src": "https://storage.googleapis.com/gcp-private-content/orosis-project/aibotbeta/aibotbeta-15b1b262bba595bd1b57ddf2135b309085450678/IMG_1466.jpeg",
+            "sizes": "512x512",
+            "type": "image/jpeg"
+        }
+    ]
+}
