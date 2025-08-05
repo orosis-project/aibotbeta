@@ -42,6 +42,7 @@ STOCKS_TO_SCAN_PER_CYCLE = 15
 INITIAL_BUY_COUNT = 10
 FINNHUB_RATE_LIMIT_SECONDS = 2.0
 GEMINI_RATE_LIMIT_SECONDS = 10.0
+MARKET_TIMEZONE = pytz.timezone('America/New_York')
 
 # --- Bot State ---
 bot_status_lock = Lock()
@@ -56,12 +57,12 @@ last_scheduled_backtest = None
 
 # --- AI Configuration ---
 ai_models = {}
-ai_model_lock = Lock()
+ai_model_lock = Lock() # Ensure this is defined globally
 ai_model_configured = False
 _last_gemini_request_time = 0
 
 def _log_message(log_type, message):
-    timestamp = datetime.now(pytz.timezone('America/New_York')).strftime('%Y-%m-%d %H:%M:%S')
+    timestamp = datetime.now(MARKET_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
     log_entry = f"[{timestamp}] {message}"
     if log_type == 'error':
         error_logs.insert(0, log_entry)
@@ -335,7 +336,7 @@ class PortfolioManager:
 
 
     def get_portfolio_status(self):
-        _reconstruct_portfolio_from_db()
+        self._reconstruct_portfolio_from_db()
         with self._lock:
             stock_values = 0.0
             detailed_stocks = {}
@@ -576,7 +577,7 @@ def get_ai_decision_and_analysis(symbol, price, news, portfolio, recent_trades, 
         return None
 
 def get_ai_inquiry(question, portfolio_status, recent_trades):
-    ai_model_inquiry = get_ai_model([5, 6])
+    ai_model_inquiry = get_ai_model([6, 5])
     if not ai_model_inquiry:
         _log_message('error', "AI model for inquiries is not available.")
         return "Error: AI model for inquiries is not available."
@@ -879,7 +880,7 @@ def ask_ai():
         portfolio_status = portfolio_manager.get_portfolio_status()
         recent_trades = get_recent_trades(5)
         
-        ai_model_inquiry = get_ai_model([5, 6])
+        ai_model_inquiry = get_ai_model([6, 5])
         if not ai_model_inquiry:
             return jsonify({"answer": "Error: AI model for inquiries is not available."}), 500
             
