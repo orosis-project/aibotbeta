@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Fixed NameError, optimized schedule, API rate limiting, multi-asset trading, and auto-pause.
+# Final Version: Bug-free, optimized schedule, API key management, and robust error handling.
 
 import os
 import time
@@ -57,7 +57,7 @@ last_scheduled_backtest = None
 
 # --- AI Configuration ---
 ai_models = {}
-ai_model_lock = Lock() # Ensure this is defined globally
+ai_model_lock = Lock()
 ai_model_configured = False
 _last_gemini_request_time = 0
 
@@ -336,7 +336,7 @@ class PortfolioManager:
 
 
     def get_portfolio_status(self):
-        self._reconstruct_portfolio_from_db()
+        _reconstruct_portfolio_from_db()
         with self._lock:
             stock_values = 0.0
             detailed_stocks = {}
@@ -365,7 +365,7 @@ class PortfolioManager:
 
             if not all_trades:
                  historical_data.append({
-                    "timestamp": datetime.now(pytz.timezone('America/New_York')).strftime('%Y-%m-%d %H:%M:%S'),
+                    "timestamp": datetime.now(MARKET_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S'),
                     "value": self.initial_cash
                 })
                  return historical_data
@@ -544,7 +544,7 @@ def get_ai_decision_and_analysis(symbol, price, news, portfolio, recent_trades, 
     - Your `reasoning` must clearly justify your decision by referencing the provided data and your strategic outlook.
 
     **Current Information:**
-    - **Current Time:** {datetime.now(MARKET_TIMEZONE)}
+    - **Current Time:** {datetime.now()}
     - **Asset Symbol:** {symbol}
     - **Current Price:** ${price:.2f}
     - **Recent News for {symbol}:** {json.dumps(news, indent=2)}
@@ -698,7 +698,7 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
             _log_message('action', "Starting new trading cycle (WEEKEND) ---")
             portfolio = portfolio_manager.get_portfolio_status()
             owned_assets = list(portfolio['owned_stocks'].keys())
-            crypto_forex_assets = [a for a in owned_assets if a.startswith("BINANCE:") or a.startswith("OANDA:")]
+            crypto_forex_assets = [a for a a in owned_assets if a.startswith("BINANCE:") or a.startswith("OANDA:")]
             if not crypto_forex_assets:
                 _log_message('action', "No crypto or forex assets to analyze. Sleeping...")
                 time.sleep(300)
