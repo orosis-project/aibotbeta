@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Stock Bot - Public View</title>
+    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
@@ -12,6 +13,13 @@
         .section-card { background-color: #2d3748; border: 1px solid #4a5568; }
         .scrollable-content { height: 300px; overflow-y: auto; }
     </style>
+    <!-- PWA Settings -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#1a202c">
+    <link rel="apple-touch-icon" href="https://storage.googleapis.com/gcp-private-content/orosis-project/aibotbeta/aibotbeta-15b1b262bba595bd1b57ddf2135b309085450678/IMG_1466.jpeg">
+    
 </head>
 <body class="bg-gray-900 text-gray-100">
 
@@ -50,9 +58,9 @@
             </div>
         </div>
 
-        <!-- Owned Assets & Recent Trades -->
+        <!-- Owned Stocks & Recent Trades -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-            <!-- Owned Assets -->
+            <!-- Owned Stocks -->
             <div class="section-card rounded-xl shadow-lg p-6">
                 <h2 class="text-2xl font-semibold mb-4 text-teal-300">Owned Assets</h2>
                 <div class="scrollable-content">
