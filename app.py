@@ -42,7 +42,6 @@ STOCKS_TO_SCAN_PER_CYCLE = 15
 INITIAL_BUY_COUNT = 10
 FINNHUB_RATE_LIMIT_SECONDS = 2.0
 GEMINI_RATE_LIMIT_SECONDS = 10.0
-MARKET_TIMEZONE = pytz.timezone('America/New_York')
 
 # --- Bot State ---
 bot_status_lock = Lock()
@@ -62,7 +61,7 @@ ai_model_configured = False
 _last_gemini_request_time = 0
 
 def _log_message(log_type, message):
-    timestamp = datetime.now(MARKET_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
+    timestamp = datetime.now(pytz.timezone('America/New_York')).strftime('%Y-%m-%d %H:%M:%S')
     log_entry = f"[{timestamp}] {message}"
     if log_type == 'error':
         error_logs.insert(0, log_entry)
@@ -336,7 +335,7 @@ class PortfolioManager:
 
 
     def get_portfolio_status(self):
-        _reconstruct_portfolio_from_db()
+        self._reconstruct_portfolio_from_db()
         with self._lock:
             stock_values = 0.0
             detailed_stocks = {}
@@ -544,7 +543,7 @@ def get_ai_decision_and_analysis(symbol, price, news, portfolio, recent_trades, 
     - Your `reasoning` must clearly justify your decision by referencing the provided data and your strategic outlook.
 
     **Current Information:**
-    - **Current Time:** {datetime.now()}
+    - **Current Time:** {datetime.now(pytz.timezone('America/New_York'))}
     - **Asset Symbol:** {symbol}
     - **Current Price:** ${price:.2f}
     - **Recent News for {symbol}:** {json.dumps(news, indent=2)}
@@ -636,7 +635,7 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
             trade_count = len(get_all_trades())
             confidence_threshold = 0.55 
 
-            _log_message('info', f"Current trade count: {trade_count}. Confidence threshold set to {confidence_threshold * 100}%.")
+            _log_message('info', f"Current trade count: {trade_threshold}. Confidence threshold set to {confidence_threshold * 100}%.")
 
             portfolio = portfolio_manager.get_portfolio_status()
             owned_assets = list(portfolio['owned_stocks'].keys())
@@ -698,7 +697,7 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
             _log_message('action', "Starting new trading cycle (WEEKEND) ---")
             portfolio = portfolio_manager.get_portfolio_status()
             owned_assets = list(portfolio['owned_stocks'].keys())
-            crypto_forex_assets = [a for a a in owned_assets if a.startswith("BINANCE:") or a.startswith("OANDA:")]
+            crypto_forex_assets = [a for a in owned_assets if a.startswith("BINANCE:") or a.startswith("OANDA:")]
             if not crypto_forex_assets:
                 _log_message('action', "No crypto or forex assets to analyze. Sleeping...")
                 time.sleep(300)
@@ -814,15 +813,15 @@ def backtest_strategy():
 def get_backtest_results_api():
     return jsonify(get_backtest_trades())
 
-@app.route("/api/logs/ai", methods=['GET'])
+@app.route("/api/logs/ai")
 def get_ai_logs():
     return jsonify(ai_logs)
 
-@app.route("/api/logs/actions", methods=['GET'])
+@app.route("/api/logs/actions")
 def get_action_logs():
     return jsonify(action_logs)
 
-@app.route("/api/logs/errors", methods=['GET'])
+@app.route("/api/logs/errors")
 def get_error_logs():
     return jsonify(error_logs)
 
