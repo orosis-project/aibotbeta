@@ -45,6 +45,8 @@
             background-color: #c53030;
         }
     </style>
+    <!-- Favicon -->
+    <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
 </head>
 <body class="bg-gray-900 text-gray-100">
 
@@ -389,7 +391,7 @@
                 const res = await fetch(`${API_BASE_URL}/portfolio/reset`, { method: 'POST' });
                 if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
                 await fetchData();
-            } catch (error) { console.error('Error resetting portfolio:', error); }
+            } catch (error) { console.error(`Error resetting portfolio:`, error); }
         };
 
         const askAI = async (question) => {
