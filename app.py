@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Bug-free, optimized schedule, API key management, and robust error handling.
+# Final Version: Robust startup, optimized schedule, API key management, and comprehensive error handling.
 
 import os
 import time
@@ -42,6 +42,7 @@ STOCKS_TO_SCAN_PER_CYCLE = 15
 INITIAL_BUY_COUNT = 10
 FINNHUB_RATE_LIMIT_SECONDS = 2.0
 GEMINI_RATE_LIMIT_SECONDS = 10.0
+MARKET_TIMEZONE = pytz.timezone('America/New_York')
 
 # --- Bot State ---
 bot_status_lock = Lock()
@@ -56,12 +57,12 @@ last_scheduled_backtest = None
 
 # --- AI Configuration ---
 ai_models = {}
-ai_model_lock = Lock()
+ai_model_lock = Lock() # Ensure this is initialized globally and explicitly
 ai_model_configured = False
 _last_gemini_request_time = 0
 
 def _log_message(log_type, message):
-    timestamp = datetime.now(pytz.timezone('America/New_York')).strftime('%Y-%m-%d %H:%M:%S')
+    timestamp = datetime.now(MARKET_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
     log_entry = f"[{timestamp}] {message}"
     if log_type == 'error':
         error_logs.insert(0, log_entry)
@@ -813,15 +814,15 @@ def backtest_strategy():
 def get_backtest_results_api():
     return jsonify(get_backtest_trades())
 
-@app.route("/api/logs/ai", methods=['GET'])
+@app.route("/api/logs/ai")
 def get_ai_logs():
     return jsonify(ai_logs)
 
-@app.route("/api/logs/actions", methods=['GET'])
+@app.route("/api/logs/actions")
 def get_action_logs():
     return jsonify(action_logs)
 
-@app.route("/api/logs/errors", methods=['GET'])
+@app.route("/api/logs/errors")
 def get_error_logs():
     return jsonify(error_logs)
 
