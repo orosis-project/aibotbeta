@@ -813,15 +813,15 @@ def backtest_strategy():
 def get_backtest_results_api():
     return jsonify(get_backtest_trades())
 
-@app.route("/api/logs/ai")
+@app.route("/api/logs/ai", methods=['GET'])
 def get_ai_logs():
     return jsonify(ai_logs)
 
-@app.route("/api/logs/actions")
+@app.route("/api/logs/actions", methods=['GET'])
 def get_action_logs():
     return jsonify(action_logs)
 
-@app.route("/api/logs/errors")
+@app.route("/api/logs/errors", methods=['GET'])
 def get_error_logs():
     return jsonify(error_logs)
 
