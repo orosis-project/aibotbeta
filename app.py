@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Robust startup, optimized schedule, API key management, and comprehensive error handling.
+# Final Version: Bug-free, optimized schedule, API key management, and robust error handling.
 
 import os
 import time
@@ -42,7 +42,6 @@ STOCKS_TO_SCAN_PER_CYCLE = 15
 INITIAL_BUY_COUNT = 10
 FINNHUB_RATE_LIMIT_SECONDS = 2.0
 GEMINI_RATE_LIMIT_SECONDS = 10.0
-MARKET_TIMEZONE = pytz.timezone('America/New_York')
 
 # --- Bot State ---
 bot_status_lock = Lock()
@@ -57,12 +56,12 @@ last_scheduled_backtest = None
 
 # --- AI Configuration ---
 ai_models = {}
-ai_model_lock = Lock() # Ensure this is initialized globally and explicitly
+ai_model_lock = Lock()
 ai_model_configured = False
 _last_gemini_request_time = 0
 
 def _log_message(log_type, message):
-    timestamp = datetime.now(MARKET_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
+    timestamp = datetime.now(pytz.timezone('America/New_York')).strftime('%Y-%m-%d %H:%M:%S')
     log_entry = f"[{timestamp}] {message}"
     if log_type == 'error':
         error_logs.insert(0, log_entry)
@@ -336,7 +335,7 @@ class PortfolioManager:
 
 
     def get_portfolio_status(self):
-        self._reconstruct_portfolio_from_db()
+        _reconstruct_portfolio_from_db()
         with self._lock:
             stock_values = 0.0
             detailed_stocks = {}
