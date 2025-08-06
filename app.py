@@ -364,7 +364,7 @@ class PortfolioManager:
 
             if not all_trades:
                  historical_data.append({
-                    "timestamp": datetime.now(MARKET_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S'),
+                    "timestamp": datetime.now(pytz.timezone('America/New_York')).strftime('%Y-%m-%d %H:%M:%S'),
                     "value": self.initial_cash
                 })
                  return historical_data
@@ -443,7 +443,7 @@ class PortfolioManager:
 # --- Finnhub Client ---
 class FinnhubClient:
     def __init__(self):
-        self.nyse_stocks = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "META", "GOOG", "BRK.B", "UNH", "JPM", "JNJ", "V", "XOM", "MA", "PG", "HD", "CVX", "LLY", "ABBV", "PFE", "BAC", "KO", "TMO", "PEP", "AVGO", "WMT", "COST", "MCD", "CSCO", "SPY", "QQQ", "DIA", "IWM", "GS", "MS", "AXP", "C", "WFC", "T", "VZ", "TMUS", "TSLA", "F", "GM", "RIVN", "F", "GM", "RIVN", "F", "GM", "RIVN", "F", "GM", "RIVN"]
+        self.nyse_stocks = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "META", "GOOG", "BRK.B", "UNH", "JPM", "JNJ", "V", "XOM", "MA", "PG", "HD", "CVX", "LLY", "ABBV", "PFE", "BAC", "KO", "PEP", "WMT", "COST", "MCD", "CSCO", "SPY", "QQQ", "DIA", "IWM", "GS", "MS", "AXP", "C", "WFC", "T", "VZ", "TMUS", "TSLA", "F", "GM", "RIVN", "F", "GM", "RIVN", "F", "GM", "RIVN", "F", "GM", "RIVN"]
         self.crypto_pairs = ["BINANCE:BTCUSDT", "BINANCE:ETHUSDT", "BINANCE:XRPUSDT", "BINANCE:DOGEUSDT"]
         self.forex_pairs = ["OANDA:EURUSD", "OANDA:GBPUSD", "OANDA:USDJPY", "OANDA:USDCAD"]
         self._last_request_time = 0
@@ -635,7 +635,7 @@ def bot_trading_loop(portfolio_manager, finnhub_client):
             trade_count = len(get_all_trades())
             confidence_threshold = 0.55 
 
-            _log_message('info', f"Current trade count: {trade_threshold}. Confidence threshold set to {confidence_threshold * 100}%.")
+            _log_message('info', f"Current trade count: {trade_count}. Confidence threshold set to {confidence_threshold * 100}%.")
 
             portfolio = portfolio_manager.get_portfolio_status()
             owned_assets = list(portfolio['owned_stocks'].keys())
@@ -902,7 +902,7 @@ def ask_ai():
         return jsonify({"answer": answer})
         
     except Exception as e:
-        _log_error(f"Error in ask_ai: {e}")
+        _log_message('error', f"Error in ask_ai: {e}")
         return jsonify({"answer": "Error: Failed to get a response from the AI."}), 500
 
 # --- Main Execution ---
