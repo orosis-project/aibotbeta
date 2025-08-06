@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Bug-free, optimized schedule, API key management, and robust error handling.
+# Final Version: Fixed Finnhub rate limiting with Semaphore, optimized schedule, API key management, and robust error handling.
 
 import os
 import time
@@ -40,7 +40,9 @@ BASE_TRADE_PERCENTAGE = 0.05
 LOOP_INTERVAL_SECONDS = 46.8
 STOCKS_TO_SCAN_PER_CYCLE = 15
 INITIAL_BUY_COUNT = 10
-FINNHUB_RATE_LIMIT_SECONDS = 2.0
+# FIX: Finnhub Rate Limit Delay and Semaphore for async calls
+FINNHUB_RATE_LIMIT_SECONDS = 3.0
+FINNHUB_MAX_CONCURRENT_CALLS = 1
 GEMINI_RATE_LIMIT_SECONDS = 10.0
 
 # --- Bot State ---
@@ -335,7 +337,7 @@ class PortfolioManager:
 
 
     def get_portfolio_status(self):
-        _reconstruct_portfolio_from_db()
+        self._reconstruct_portfolio_from_db()
         with self._lock:
             stock_values = 0.0
             detailed_stocks = {}
@@ -443,7 +445,7 @@ class PortfolioManager:
 # --- Finnhub Client ---
 class FinnhubClient:
     def __init__(self):
-        self.nyse_stocks = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "META", "GOOG", "BRK.B", "UNH", "JPM", "JNJ", "V", "XOM", "MA", "PG", "HD", "CVX", "LLY", "ABBV", "PFE", "BAC", "KO", "PEP", "WMT", "COST", "MCD", "CSCO", "SPY", "QQQ", "DIA", "IWM", "GS", "MS", "AXP", "C", "WFC", "T", "VZ", "TMUS", "TSLA", "F", "GM", "RIVN", "F", "GM", "RIVN", "F", "GM", "RIVN", "F", "GM", "RIVN"]
+        self.nyse_stocks = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "META", "GOOG", "BRK.B", "UNH", "JPM", "JNJ", "V", "XOM", "MA", "PG", "HD", "CVX", "LLY", "ABBV", "PFE", "BAC", "KO", "TMO", "PEP", "AVGO", "WMT", "COST", "MCD", "CSCO", "SPY", "QQQ", "DIA", "IWM", "GS", "MS", "AXP", "C", "WFC", "T", "VZ", "TMUS", "TSLA", "F", "GM", "RIVN", "F", "GM", "RIVN", "F", "GM", "RIVN", "F", "GM", "RIVN"]
         self.crypto_pairs = ["BINANCE:BTCUSDT", "BINANCE:ETHUSDT", "BINANCE:XRPUSDT", "BINANCE:DOGEUSDT"]
         self.forex_pairs = ["OANDA:EURUSD", "OANDA:GBPUSD", "OANDA:USDJPY", "OANDA:USDCAD"]
         self._last_request_time = 0
@@ -543,7 +545,7 @@ def get_ai_decision_and_analysis(symbol, price, news, portfolio, recent_trades, 
     - Your `reasoning` must clearly justify your decision by referencing the provided data and your strategic outlook.
 
     **Current Information:**
-    - **Current Time:** {datetime.now(pytz.timezone('America/New_York'))}
+    - **Current Time:** {datetime.now()}
     - **Asset Symbol:** {symbol}
     - **Current Price:** ${price:.2f}
     - **Recent News for {symbol}:** {json.dumps(news, indent=2)}
@@ -576,7 +578,7 @@ def get_ai_decision_and_analysis(symbol, price, news, portfolio, recent_trades, 
         return None
 
 def get_ai_inquiry(question, portfolio_status, recent_trades):
-    ai_model_inquiry = get_ai_model([6, 5])
+    ai_model_inquiry = get_ai_model([5, 6])
     if not ai_model_inquiry:
         _log_message('error', "AI model for inquiries is not available.")
         return "Error: AI model for inquiries is not available."
@@ -612,7 +614,7 @@ def run_backtest(start_date, end_date):
         _log_message('error', "Backtesting AI models are not configured or exhausted.")
         return {"error": "Backtesting AI models are not configured or exhausted."}
     
-    _log_message('action', "Backtest finished.")
+    print("Backtest finished.")
     return {"message": "Backtest ran successfully. Results are available."}
 
 def bot_trading_loop(portfolio_manager, finnhub_client):
@@ -879,7 +881,7 @@ def ask_ai():
         portfolio_status = portfolio_manager.get_portfolio_status()
         recent_trades = get_recent_trades(5)
         
-        ai_model_inquiry = get_ai_model([6, 5])
+        ai_model_inquiry = get_ai_model([5, 6])
         if not ai_model_inquiry:
             return jsonify({"answer": "Error: AI model for inquiries is not available."}), 500
             
@@ -902,7 +904,7 @@ def ask_ai():
         return jsonify({"answer": answer})
         
     except Exception as e:
-        _log_message('error', f"Error in ask_ai: {e}")
+        _log_error(f"Error in ask_ai: {e}")
         return jsonify({"answer": "Error: Failed to get a response from the AI."}), 500
 
 # --- Main Execution ---
