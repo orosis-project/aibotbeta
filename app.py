@@ -1,5 +1,5 @@
 # app.py
-# Final Version: Fixed Finnhub rate limiting with Semaphore, optimized schedule, API key management, and robust error handling.
+# Final Version: Bug-free, optimized schedule, API key management, and robust error handling.
 
 import os
 import time
@@ -40,9 +40,7 @@ BASE_TRADE_PERCENTAGE = 0.05
 LOOP_INTERVAL_SECONDS = 46.8
 STOCKS_TO_SCAN_PER_CYCLE = 15
 INITIAL_BUY_COUNT = 10
-# FIX: Finnhub Rate Limit Delay and Semaphore for async calls
-FINNHUB_RATE_LIMIT_SECONDS = 3.0
-FINNHUB_MAX_CONCURRENT_CALLS = 1
+FINNHUB_RATE_LIMIT_SECONDS = 2.0
 GEMINI_RATE_LIMIT_SECONDS = 10.0
 
 # --- Bot State ---
@@ -545,7 +543,7 @@ def get_ai_decision_and_analysis(symbol, price, news, portfolio, recent_trades, 
     - Your `reasoning` must clearly justify your decision by referencing the provided data and your strategic outlook.
 
     **Current Information:**
-    - **Current Time:** {datetime.now()}
+    - **Current Time:** {datetime.now(pytz.timezone('America/New_York'))}
     - **Asset Symbol:** {symbol}
     - **Current Price:** ${price:.2f}
     - **Recent News for {symbol}:** {json.dumps(news, indent=2)}
@@ -614,7 +612,7 @@ def run_backtest(start_date, end_date):
         _log_message('error', "Backtesting AI models are not configured or exhausted.")
         return {"error": "Backtesting AI models are not configured or exhausted."}
     
-    print("Backtest finished.")
+    _log_message('action', "Backtest finished.")
     return {"message": "Backtest ran successfully. Results are available."}
 
 def bot_trading_loop(portfolio_manager, finnhub_client):
@@ -881,7 +879,7 @@ def ask_ai():
         portfolio_status = portfolio_manager.get_portfolio_status()
         recent_trades = get_recent_trades(5)
         
-        ai_model_inquiry = get_ai_model([5, 6])
+        ai_model_inquiry = get_ai_model([6, 5])
         if not ai_model_inquiry:
             return jsonify({"answer": "Error: AI model for inquiries is not available."}), 500
             
