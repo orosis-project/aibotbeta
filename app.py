@@ -576,7 +576,7 @@ def get_ai_decision_and_analysis(symbol, price, news, portfolio, recent_trades, 
         return None
 
 def get_ai_inquiry(question, portfolio_status, recent_trades):
-    ai_model_inquiry = get_ai_model([5, 6])
+    ai_model_inquiry = get_ai_model([6, 5])
     if not ai_model_inquiry:
         _log_message('error', "AI model for inquiries is not available.")
         return "Error: AI model for inquiries is not available."
@@ -902,7 +902,7 @@ def ask_ai():
         return jsonify({"answer": answer})
         
     except Exception as e:
-        _log_error(f"Error in ask_ai: {e}")
+        _log_message('error', f"Error in ask_ai: {e}")
         return jsonify({"answer": "Error: Failed to get a response from the AI."}), 500
 
 # --- Main Execution ---
