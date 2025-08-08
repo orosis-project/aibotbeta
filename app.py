@@ -408,8 +408,9 @@ class PortfolioManager:
             self.cash -= cost
             if symbol in self.stocks:
                 total_qty = self.stocks[symbol]['quantity'] + quantity
-                self.stocks[symbol]['avg_price'] = ((self.stocks[symbol]['avg_price'] * self.stocks[symbol]['quantity']) + cost) / total_qty
-                self.stocks[symbol]['quantity'] = total_qty
+                new_avg_price = ((self.stocks[symbol]['avg_price'] * self.stocks[symbol]['quantity']) + cost) / total_qty
+                self.stocks[symbol]['quantity'] = new_total_quantity
+                self.stocks[symbol]['avg_price'] = new_avg_price
             else:
                 self.stocks[symbol] = {'quantity': quantity, 'avg_price': price}
             self._log_trade(symbol, 'BUY', quantity, price, reasoning, confidence)
@@ -543,7 +544,7 @@ def get_ai_decision_and_analysis(symbol, price, news, portfolio, recent_trades, 
     - Your `reasoning` must clearly justify your decision by referencing the provided data and your strategic outlook.
 
     **Current Information:**
-    - **Current Time:** {datetime.now(pytz.timezone('America/New_York'))}
+    - **Current Time:** {datetime.now(MARKET_TIMEZONE)}
     - **Asset Symbol:** {symbol}
     - **Current Price:** ${price:.2f}
     - **Recent News for {symbol}:** {json.dumps(news, indent=2)}
@@ -576,7 +577,7 @@ def get_ai_decision_and_analysis(symbol, price, news, portfolio, recent_trades, 
         return None
 
 def get_ai_inquiry(question, portfolio_status, recent_trades):
-    ai_model_inquiry = get_ai_model([6, 5])
+    ai_model_inquiry = get_ai_model([5, 6])
     if not ai_model_inquiry:
         _log_message('error', "AI model for inquiries is not available.")
         return "Error: AI model for inquiries is not available."
@@ -879,7 +880,7 @@ def ask_ai():
         portfolio_status = portfolio_manager.get_portfolio_status()
         recent_trades = get_recent_trades(5)
         
-        ai_model_inquiry = get_ai_model([6, 5])
+        ai_model_inquiry = get_ai_model([5, 6])
         if not ai_model_inquiry:
             return jsonify({"answer": "Error: AI model for inquiries is not available."}), 500
             
@@ -902,7 +903,7 @@ def ask_ai():
         return jsonify({"answer": answer})
         
     except Exception as e:
-        _log_message('error', f"Error in ask_ai: {e}")
+        _log_error(f"Error in ask_ai: {e}")
         return jsonify({"answer": "Error: Failed to get a response from the AI."}), 500
 
 # --- Main Execution ---
