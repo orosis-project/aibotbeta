@@ -2,7 +2,7 @@
 name = "aibotbeta"
 version = "0.1.0"
 description = "AI-powered stock trading bot"
-authors = ["Your Name <you@example.com>"]
+authors = ["Aus Eck <austinme9912@gmail.com>"]
 license = "MIT"
 package-mode = false
 
